@@ -1,4 +1,4 @@
-name: assurancy
+﻿name: assurancy
 description: "A new Flutter project."
 publish_to: 'none'
 version: 1.0.0+1
@@ -19,7 +19,9 @@ dependencies:
   pdf: ^3.10.8
   printing: ^5.12.0
   path_provider: ^2.1.2
-  http_parser: ^4.0.2 
+  http_parser: ^4.0.2
+  geolocator: ^11.0.0
+  jwt_decoder: ^2.0.1       # ← AJOUTE pour décoder le token JWT
 
 dev_dependencies:
   flutter_test:

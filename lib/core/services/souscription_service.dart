@@ -26,6 +26,11 @@ class SouscriptionService {
     required String immatriculation,
     required String numeroChassis,
     String? energie,
+    String? genre,
+    String? type,
+    int? puissanceCv,
+    int? nombrePlaces,
+    String? couleur,
     double? valeurVenale,
     Uint8List? carteGriseBytes,
     String? carteGriseNom,
@@ -42,8 +47,13 @@ class SouscriptionService {
       'annee':           annee.toString(),
       'immatriculation': immatriculation,
       'numero_chassis':  numeroChassis,
-      if (energie != null)      'energie':       energie,
-      if (valeurVenale != null) 'valeur_venale': valeurVenale.toString(),
+      if (energie != null)                        'energie':       energie,
+      if (genre != null)                          'genre':         genre,
+      if (type != null && type.isNotEmpty)        'type':          type,
+      if (puissanceCv != null)                    'puissance_cv':  puissanceCv.toString(),
+      if (nombrePlaces != null)                   'nombre_places': nombrePlaces.toString(),
+      if (couleur != null && couleur.isNotEmpty)  'couleur':       couleur,
+      if (valeurVenale != null)                   'valeur_venale': valeurVenale.toString(),
     };
 
     final filesBytes = <String, Uint8List>{};

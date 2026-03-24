@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:local_auth/local_auth.dart';
 import '../../core/services/auth_service.dart';
-import '../../core/services/biometric_service.dart'; // ✅ BIOMÉTRIE
+import '../../core/services/biometric_service.dart';
 import 'inscription_page.dart';
 import 'mot_de_passe_oublie_page.dart';
 import '../../core/dashboard/dashboard_page.dart';
+import '../admin/admin_dashboard_page.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -19,11 +21,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
   final List<FocusNode> _pinFocusNodes =
       List.generate(4, (_) => FocusNode());
   bool _isLoading = false;
-  bool _biometricAvailable = false; // ✅ BIOMÉTRIE
+  bool _biometricAvailable = false;
   late AnimationController _animController;
   late Animation<double> _fadeAnim;
   final _authService = AuthService();
-  final _biometricService = BiometricService(); // ✅ BIOMÉTRIE
+  final _biometricService = BiometricService();
 
   @override
   void initState() {
@@ -32,16 +34,14 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         vsync: this, duration: const Duration(milliseconds: 700));
     _fadeAnim = CurvedAnimation(parent: _animController, curve: Curves.easeOut);
     _animController.forward();
-    _checkBiometric(); // ✅ BIOMÉTRIE
+    _checkBiometric();
   }
 
-  // ✅ BIOMÉTRIE : vérifier disponibilité au démarrage
   Future<void> _checkBiometric() async {
     final available = await _biometricService.isAvailable();
     if (mounted) setState(() => _biometricAvailable = available);
   }
 
-  // ✅ BIOMÉTRIE : icône selon le type disponible (Face ID ou empreinte)
   Future<IconData> _getBiometricIcon() async {
     final types = await _biometricService.getAvailableBiometrics();
     if (types.contains(BiometricType.face)) return Icons.face_rounded;
@@ -66,6 +66,29 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     setState(() {});
   }
 
+  // ══════════════════════════════════════════════════════
+  // REDIRECTION SELON LE RÔLE
+  // ══════════════════════════════════════════════════════
+  void _redirecterSelonRole(String role) {
+    if (!mounted) return;
+    if (role == 'ADMIN' && kIsWeb) {
+      // ✅ Admin sur Web → interface admin
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AdminDashboardPage()),
+      );
+    } else {
+      // ✅ Tous les autres → dashboard normal
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const DashboardPage()),
+      );
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // LOGIN AVEC PIN
+  // ══════════════════════════════════════════════════════
   void _handleLogin() async {
     final telephone = _phoneController.text.trim();
     final pin = _pinControllers.map((c) => c.text).join();
@@ -89,10 +112,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       if (res['success'] == true) {
         await _authService.sauvegarderSession(res['token'], res['user']);
         if (!mounted) return;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const DashboardPage()),
-        );
+        // ✅ Redirection selon le rôle
+        final role = res['user']['role'] ?? '';
+        _redirecterSelonRole(role);
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -115,7 +137,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     }
   }
 
-  // ✅ BIOMÉTRIE : authentification par empreinte / Face ID
+  // ══════════════════════════════════════════════════════
+  // LOGIN BIOMÉTRIQUE
+  // ══════════════════════════════════════════════════════
   void _handleBiometricLogin() async {
     setState(() => _isLoading = true);
     try {
@@ -123,13 +147,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       if (!mounted) return;
 
       if (success) {
-        // Récupérer la session sauvegardée et aller au dashboard
         final hasSession = await _authService.hasSession();
         if (hasSession) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => const DashboardPage()),
-          );
+          // ✅ Redirection selon le rôle sauvegardé
+          final role = await _authService.getRole();
+          _redirecterSelonRole(role);
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -182,8 +204,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                   child: Column(
                     children: [
                       const Spacer(flex: 2),
-
-                      // ── LOGO ──────────────────────────────
                       Container(
                         width: 88, height: 88,
                         decoration: BoxDecoration(
@@ -191,49 +211,30 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           shape: BoxShape.circle,
                           boxShadow: [BoxShadow(
                             color: const Color(0xFF1A56DB).withOpacity(0.13),
-                            blurRadius: 24,
-                            offset: const Offset(0, 8),
+                            blurRadius: 24, offset: const Offset(0, 8),
                           )],
                         ),
                         child: const Center(
-                          child: Icon(Icons.shield_rounded,
-                              color: Color(0xFF1A56DB), size: 46),
-                        ),
+                          child: Icon(Icons.shield_rounded, color: Color(0xFF1A56DB), size: 46)),
                       ),
                       const SizedBox(height: 16),
                       const Text('AssurAncy',
-                          style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF1535A8),
-                              letterSpacing: -0.5)),
+                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900,
+                              color: Color(0xFF1535A8), letterSpacing: -0.5)),
                       const SizedBox(height: 4),
                       const Text('ASSURANCE AUTO',
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF5B8DEF),
-                              letterSpacing: 2)),
+                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                              color: Color(0xFF5B8DEF), letterSpacing: 2)),
                       const SizedBox(height: 2),
                       const Text('BY MAURITANIE',
-                          style: TextStyle(
-                              fontSize: 10,
-                              color: Color(0xFF8EA8D8),
-                              letterSpacing: 1.5)),
-
+                          style: TextStyle(fontSize: 10, color: Color(0xFF8EA8D8), letterSpacing: 1.5)),
                       const Spacer(flex: 2),
-
-                      // ── TÉLÉPHONE ─────────────────────────
                       Container(
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(14),
+                          color: Colors.white, borderRadius: BorderRadius.circular(14),
                           border: Border.all(color: const Color(0xFFD0DCF0), width: 1.2),
-                          boxShadow: [BoxShadow(
-                            color: Colors.black.withOpacity(0.04),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          )],
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                              blurRadius: 8, offset: const Offset(0, 2))],
                         ),
                         child: TextField(
                           controller: _phoneController,
@@ -250,8 +251,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                         ),
                       ),
                       const SizedBox(height: 20),
-
-                      // ── 4 CASES PIN ───────────────────────
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: List.generate(4, (index) {
@@ -259,44 +258,32 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           return Container(
                             width: 68, height: 68,
                             decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
+                              color: Colors.white, borderRadius: BorderRadius.circular(14),
                               border: Border.all(
                                 color: filled ? const Color(0xFF1A56DB) : const Color(0xFFD0DCF0),
-                                width: filled ? 2 : 1.2,
-                              ),
-                              boxShadow: [BoxShadow(
-                                color: Colors.black.withOpacity(0.04),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              )],
+                                width: filled ? 2 : 1.2),
+                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                                  blurRadius: 8, offset: const Offset(0, 2))],
                             ),
                             child: Center(
                               child: TextField(
                                 controller: _pinControllers[index],
                                 focusNode: _pinFocusNodes[index],
-                                obscureText: true,
-                                maxLength: 1,
+                                obscureText: true, maxLength: 1,
                                 textAlign: TextAlign.center,
                                 keyboardType: TextInputType.number,
-                                style: const TextStyle(
-                                    fontSize: 22,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF1A3DB5)),
+                                style: const TextStyle(fontSize: 22,
+                                    fontWeight: FontWeight.w700, color: Color(0xFF1A3DB5)),
                                 onChanged: (v) => _onPinChanged(v, index),
                                 decoration: const InputDecoration(
-                                  border: InputBorder.none,
-                                  counterText: '',
-                                  contentPadding: EdgeInsets.zero,
-                                ),
+                                  border: InputBorder.none, counterText: '',
+                                  contentPadding: EdgeInsets.zero),
                               ),
                             ),
                           );
                         }),
                       ),
                       const SizedBox(height: 28),
-
-                      // ── BOUTON CONNEXION ──────────────────
                       GestureDetector(
                         onTap: _isLoading ? null : _handleLogin,
                         child: Container(
@@ -306,55 +293,38 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                             borderRadius: BorderRadius.circular(30),
                             boxShadow: [BoxShadow(
                               color: const Color(0xFF1A56DB).withOpacity(0.35),
-                              blurRadius: 18,
-                              offset: const Offset(0, 7),
-                            )],
+                              blurRadius: 18, offset: const Offset(0, 7))],
                           ),
                           child: Center(
                             child: _isLoading
-                                ? const SizedBox(
-                                    width: 22, height: 22,
+                                ? const SizedBox(width: 22, height: 22,
                                     child: CircularProgressIndicator(
                                         color: Colors.white, strokeWidth: 2.5))
                                 : const Text('Connexion',
-                                    style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w700)),
+                                    style: TextStyle(color: Colors.white,
+                                        fontSize: 16, fontWeight: FontWeight.w700)),
                           ),
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // ✅ BIOMÉTRIE : bouton empreinte / Face ID
                       if (_biometricAvailable) ...[
-                        Row(
-                          children: [
-                            const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 12),
-                              child: Text('ou',
-                                  style: TextStyle(
-                                      color: Colors.grey.shade400, fontSize: 12)),
-                            ),
-                            const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
-                          ],
-                        ),
+                        Row(children: [
+                          const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text('ou', style: TextStyle(color: Colors.grey.shade400, fontSize: 12))),
+                          const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
+                        ]),
                         const SizedBox(height: 14),
                         GestureDetector(
                           onTap: _isLoading ? null : _handleBiometricLogin,
                           child: Container(
                             width: double.infinity, height: 54,
                             decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(30),
-                              border: Border.all(
-                                  color: const Color(0xFF1A56DB), width: 1.5),
-                              boxShadow: [BoxShadow(
-                                color: Colors.black.withOpacity(0.04),
-                                blurRadius: 8,
-                                offset: const Offset(0, 2),
-                              )],
+                              color: Colors.white, borderRadius: BorderRadius.circular(30),
+                              border: Border.all(color: const Color(0xFF1A56DB), width: 1.5),
+                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04),
+                                  blurRadius: 8, offset: const Offset(0, 2))],
                             ),
                             child: FutureBuilder<IconData>(
                               future: _getBiometricIcon(),
@@ -363,94 +333,55 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                                 final label = icon == Icons.face_rounded
                                     ? 'Connexion avec Face ID'
                                     : 'Connexion avec empreinte';
-                                return Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(icon,
-                                        color: const Color(0xFF1A56DB), size: 26),
-                                    const SizedBox(width: 10),
-                                    Text(label,
-                                        style: const TextStyle(
-                                            color: Color(0xFF1A56DB),
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w700)),
-                                  ],
-                                );
+                                return Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                  Icon(icon, color: const Color(0xFF1A56DB), size: 26),
+                                  const SizedBox(width: 10),
+                                  Text(label, style: const TextStyle(color: Color(0xFF1A56DB),
+                                      fontSize: 15, fontWeight: FontWeight.w700)),
+                                ]);
                               },
                             ),
                           ),
                         ),
                         const SizedBox(height: 4),
                       ],
-
                       const SizedBox(height: 14),
-
-                      // ── MOT DE PASSE OUBLIÉ ───────────────
                       GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const MotDePasseOubliePage()),
-                        ),
-                        child: const Text(
-                          'Mot de passe oublié ?',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            color: Color(0xFF1A56DB),
-                            fontWeight: FontWeight.w600,
-                            decoration: TextDecoration.underline,
-                            decorationColor: Color(0xFF1A56DB),
-                          ),
-                        ),
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const MotDePasseOubliePage())),
+                        child: const Text('Mot de passe oublié ?',
+                            style: TextStyle(fontSize: 13.5, color: Color(0xFF1A56DB),
+                                fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.underline,
+                                decorationColor: Color(0xFF1A56DB))),
                       ),
-
                       const Spacer(flex: 2),
-
-                      // ── INSCRIPTION ───────────────────────
                       GestureDetector(
-                        onTap: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const InscriptionPage()),
-                        ),
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const InscriptionPage())),
                         child: RichText(
                           text: const TextSpan(
                             text: 'Nouvel utilisateur ? ',
                             style: TextStyle(fontSize: 13.5, color: Color(0xFF4A5568)),
-                            children: [
-                              TextSpan(
-                                text: "S'inscrire maintenant",
-                                style: TextStyle(
-                                    color: Color(0xFF1A56DB),
-                                    fontWeight: FontWeight.w700),
-                              )
-                            ],
+                            children: [TextSpan(
+                              text: "S'inscrire maintenant",
+                              style: TextStyle(color: Color(0xFF1A56DB), fontWeight: FontWeight.w700),
+                            )],
                           ),
                         ),
                       ),
-
                       const Spacer(flex: 1),
-
-                      // ── CONTACTS ──────────────────────────
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFFE0E8F5)),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.mail_outline_rounded,
-                                color: Color(0xFF4A5568), size: 18),
-                            SizedBox(width: 8),
-                            Text('Contacts',
-                                style: TextStyle(
-                                    fontSize: 13.5,
-                                    color: Color(0xFF4A5568),
-                                    fontWeight: FontWeight.w600)),
-                          ],
-                        ),
+                          color: Colors.white, borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE0E8F5))),
+                        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(Icons.mail_outline_rounded, color: Color(0xFF4A5568), size: 18),
+                          SizedBox(width: 8),
+                          Text('Contacts', style: TextStyle(fontSize: 13.5,
+                              color: Color(0xFF4A5568), fontWeight: FontWeight.w600)),
+                        ]),
                       ),
                       const SizedBox(height: 24),
                     ],
