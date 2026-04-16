@@ -1,6 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:html' as html;
+import '../../core/utils/download_helper.dart';
 import '../../core/services/admin_service.dart';
 import '../../core/services/auth_service.dart';
 import '../auth/login_page.dart';
@@ -987,43 +987,37 @@ class _ExportTabState extends State<_ExportTab> {
   String? _enCours;
 
   Future<void> _telecharger(BuildContext ctx, String type) async {
-    setState(() => _enCours = type);
-    try {
-      final token = await widget.svc.getTokenPublic();
-      final url   = widget.svc.getExportUrl(type);
+  setState(() => _enCours = type);
+  try {
+    final token    = await widget.svc.getTokenPublic();
+    final url      = widget.svc.getExportUrl(type);
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $token'},
+    );
 
-      // Téléchargement via http avec le token
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'Authorization': 'Bearer $token'},
+    if (response.statusCode == 200) {
+      // ✅ Utilise downloadCsv au lieu de html.Blob
+      await downloadCsv(
+        response.bodyBytes,
+        '${type}_${DateTime.now().toIso8601String().substring(0, 10)}.csv',
       );
-
-      if (response.statusCode == 200) {
-        // Déclencher le téléchargement dans le navigateur (Flutter Web)
-        final bytes    = response.bodyBytes;
-        final blob     = html.Blob([bytes], 'text/csv;charset=utf-8');
-        final blobUrl  = html.Url.createObjectUrlFromBlob(blob);
-        final anchor   = html.AnchorElement(href: blobUrl)
-          ..setAttribute('download', '${type}_${DateTime.now().toIso8601String().substring(0, 10)}.csv')
-          ..click();
-        html.Url.revokeObjectUrl(blobUrl);
-
-        if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('Fichier $type.csv téléchargé avec succès !'),
-          backgroundColor: AC.success, behavior: SnackBarBehavior.floating));
-      } else {
-        if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-          content: Text('Erreur serveur: ${response.statusCode}'),
-          backgroundColor: AC.danger, behavior: SnackBarBehavior.floating));
-      }
-    } catch (e) {
       if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-        content: Text('Erreur: $e'),
+        content: Text('Fichier $type.csv téléchargé avec succès !'),
+        backgroundColor: AC.success, behavior: SnackBarBehavior.floating));
+    } else {
+      if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+        content: Text('Erreur serveur: ${response.statusCode}'),
         backgroundColor: AC.danger, behavior: SnackBarBehavior.floating));
-    } finally {
-      setState(() => _enCours = null);
     }
+  } catch (e) {
+    if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+      content: Text('Erreur: $e'),
+      backgroundColor: AC.danger, behavior: SnackBarBehavior.floating));
+  } finally {
+    setState(() => _enCours = null);
   }
+}
 
   @override
   Widget build(BuildContext context) => SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(children: [

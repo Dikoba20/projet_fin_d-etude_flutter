@@ -8,6 +8,9 @@ import '../api_client.dart';
 class AuthService {
   final _api = ApiClient();
 
+  // ─────────────────────────────────────────────────────────
+  // INSCRIPTION
+  // ─────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> inscrire({
     required String nom,
     required String prenom,
@@ -16,19 +19,22 @@ class AuthService {
     String? nni,
     String? email,
     String? adresse,
-    File? photo, // ✅ Ajouté — ignoré sur web
+    File? photo, // ignoré sur web
   }) async {
     return await _api.post('/inscription/', {
       'nom':       nom,
       'prenom':    prenom,
       'telephone': telephone,
       'code_pin':  codePin,
-      if (nni != null && nni.isNotEmpty)         'nni':     nni,
-      if (email != null && email.isNotEmpty)     'email':   email,
+      if (nni     != null && nni.isNotEmpty)     'nni':     nni,
+      if (email   != null && email.isNotEmpty)   'email':   email,
       if (adresse != null && adresse.isNotEmpty) 'adresse': adresse,
     });
   }
 
+  // ─────────────────────────────────────────────────────────
+  // VÉRIFICATION OTP
+  // ─────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> verifierOtp({
     required String telephone,
     required String otpCode,
@@ -39,6 +45,11 @@ class AuthService {
     });
   }
 
+  // ─────────────────────────────────────────────────────────
+  // CONNEXION STANDARD — CLIENT / EXPERT / AGENT (mobile)
+  // Endpoint : POST /connexion/
+  // Champs   : telephone + code_pin
+  // ─────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> connecter({
     required String telephone,
     required String codePin,
@@ -49,11 +60,34 @@ class AuthService {
     });
   }
 
+  // ─────────────────────────────────────────────────────────
+  // CONNEXION AGENT / ADMIN — portail web uniquement
+  // ✅ Endpoint : POST /connexion-agent/
+  // Champs     : email + password
+  // Retourne   : { success, token, user } comme /connexion/
+  // ─────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> connecterAgent({
+    required String email,
+    required String password,
+  }) async {
+    return await _api.post('/connexion-agent/', {
+      'email':    email,
+      'password': password,
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────
+  // RENVOYER OTP
+  // ─────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> renvoyerOtp(String telephone) async {
     return await _api.post('/renvoyer-otp/', {'telephone': telephone});
   }
 
-  Future<void> sauvegarderSession(String token, Map<String, dynamic> user) async {
+  // ─────────────────────────────────────────────────────────
+  // SESSION
+  // ─────────────────────────────────────────────────────────
+  Future<void> sauvegarderSession(
+      String token, Map<String, dynamic> user) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('token',        token);
     await prefs.setString('user_id',      user['id'].toString());
@@ -98,18 +132,19 @@ class AuthService {
     };
   }
 
-  // ✅ Récupère le rôle directement
   Future<String> getRole() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('user_role') ?? '';
   }
 
-  // ✅ Vérifie si l'utilisateur est admin
   Future<bool> estAdmin() async {
     final role = await getRole();
     return role == 'ADMIN';
   }
 
+  // ─────────────────────────────────────────────────────────
+  // RAFRAÎCHIR PROFIL
+  // ─────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> rafraichirProfil() async {
     final token = await getToken();
     if (token == null) return {};

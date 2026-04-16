@@ -19,30 +19,51 @@ class DashboardPage extends StatefulWidget {
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final _authService          = AuthService();
-  final _souscriptionService  = SouscriptionService();
+  final _authService         = AuthService();
+  final _souscriptionService = SouscriptionService();
   late final _paiementService = PaiementService(ApiClient());
-  final _sinistreService      = SinistreService();
+  final _sinistreService     = SinistreService();
 
-  Map<String, String> _userInfo     = {};
-  List<dynamic>       _vehicules    = [];
-  List<dynamic>       _contrats     = [];
-  List<dynamic>       _activites    = [];
-  List<dynamic>       _paiements    = [];
-  List<dynamic>       _sinistres    = [];
-  bool                _loadingData  = true;
+  Map<String, String> _userInfo    = {};
+  List<dynamic>       _vehicules   = [];
+  List<dynamic>       _contrats    = [];
+  List<dynamic>       _activites   = [];
+  List<dynamic>       _paiements   = [];
+  List<dynamic>       _sinistres   = [];
+  bool                _loadingData = true;
+  String?             _erreurReseau;        // ← message d'erreur réseau
   int                 _currentIndex = 0;
 
+  // ── Palette ───────────────────────────────────────────────────────────────
   static const _bleu1  = Color(0xFF1535A8);
   static const _bleu2  = Color(0xFF1A56DB);
   static const _bleu3  = Color(0xFF3B82F6);
-  static const _vert   = Color(0xFF22C55E);
-  static const _rouge  = Color(0xFFEF4444);
+  static const _vert   = Color(0xFF16A34A);
+  static const _rouge  = Color(0xFFDC2626);
   static const _orange = Color(0xFFEA580C);
-  static const _violet = Color(0xFF8B5CF6);
-  static const _fond   = Color(0xFFF0F4FF);
-  static const _texte  = Color(0xFF1A1A2E);
-  static const _gris   = Color(0xFF8492A6);
+  static const _violet = Color(0xFF7C3AED);
+  static const _fond   = Color(0xFFF5F7FF);
+  static const _texte  = Color(0xFF111827);
+  static const _gris   = Color(0xFF6B7280);
+  static const _card   = Color(0xFFFFFFFF);
+
+  bool _estActif(dynamic statut) {
+    final s = statut?.toString().toUpperCase() ?? '';
+    return s == 'ACTIF' || s == 'CONFIRME' || s == 'VALIDE' || s == 'ACTIVE';
+  }
+
+  /// Extrait une liste depuis la réponse API.
+  /// Cherche dans plusieurs clés possibles selon l'endpoint.
+  List<dynamic> _extraireList(Map<String, dynamic> res, List<String> cles) {
+    // Si erreur réseau → liste vide
+    if (res['network_error'] == true) return [];
+    for (final cle in cles) {
+      if (res[cle] is List) return res[cle] as List;
+    }
+    // Certaines API DRF retournent directement une liste via 'results'
+    if (res['results'] is List) return res['results'] as List;
+    return [];
+  }
 
   @override
   void initState() {
@@ -51,23 +72,55 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Future<void> _loadAll() async {
-    setState(() => _loadingData = true);
+    setState(() {
+      _loadingData  = true;
+      _erreurReseau = null;
+    });
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token') ?? '';
 
-      final info = await _authService.getUserInfo();
-      final resV = await _souscriptionService.getMesVehicules();
-      final resC = await _souscriptionService.getMesContrats();
-      final resP = await _paiementService.getPaiements();
-      final resS = await _sinistreService.getSinistres(token: token);
+      final results = await Future.wait([
+        _authService.getUserInfo(),
+        _souscriptionService.getMesVehicules(),
+        _souscriptionService.getMesContrats(),
+        _paiementService.getPaiements(),
+        _sinistreService.getSinistres(token: token),
+      ]);
+
+      final info  = results[0] as Map<String, String>;
+      final resV  = results[1] as Map<String, dynamic>;
+      final resC  = results[2] as Map<String, dynamic>;
+      final resP  = results[3];
+      final resS  = results[4] as Map<String, dynamic>;
+
+      // Détection erreur réseau sur n'importe quel appel
+      final hasNetworkError = [resV, resC, resS].any((r) => r['network_error'] == true);
+      if (hasNetworkError) {
+        final errMsg = [resV, resC, resS]
+            .firstWhere((r) => r['network_error'] == true, orElse: () => {})['message'] as String?;
+        setState(() => _erreurReseau = errMsg ?? 'Serveur inaccessible.');
+      }
+
+      // Log de débogage
+      debugPrint('=== VEHICULES: ${resV.keys.toList()}');
+      debugPrint('=== CONTRATS:  ${resC.keys.toList()}');
+      debugPrint('=== SINISTRES: ${resS.keys.toList()}');
+
+      final vehicules = _extraireList(resV, ['vehicules', 'results', 'data']);
+      final contrats  = _extraireList(resC, ['contrats',  'results', 'data']);
+      final sinistres = _extraireList(resS, ['sinistres', 'results', 'data']);
+      final paiements = resP is List ? resP : _extraireList(resP as Map<String, dynamic>, ['paiements', 'results', 'data']);
+
+      debugPrint('=== ${contrats.length} contrat(s) chargé(s)');
 
       setState(() {
         _userInfo  = info;
-        _vehicules = resV['vehicules'] ?? [];
-        _contrats  = resC['contrats']  ?? [];
-        _paiements = resP;
-        _sinistres = resS['sinistres'] ?? [];
+        _vehicules = vehicules;
+        _contrats  = contrats;
+        _paiements = paiements;
+        _sinistres = sinistres;
         _activites = [];
         for (final c in _contrats.take(3)) {
           _activites.add({
@@ -78,7 +131,9 @@ class _DashboardPageState extends State<DashboardPage> {
           });
         }
       });
-    } catch (_) {
+    } catch (e) {
+      debugPrint('=== ERREUR _loadAll: $e');
+      setState(() => _erreurReseau = 'Erreur inattendue : $e');
     } finally {
       setState(() => _loadingData = false);
     }
@@ -120,7 +175,6 @@ class _DashboardPageState extends State<DashboardPage> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => const EspacePersonnelPage()));
   }
 
-  // â”€â”€ Choisir contrat pour sinistre â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   void _choisirContratPourSinistre(List<dynamic> contratsActifs) {
     if (contratsActifs.length == 1) {
       _allerDeclarerSinistre(Map<String, dynamic>.from(contratsActifs.first));
@@ -129,167 +183,202 @@ class _DashboardPageState extends State<DashboardPage> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.3,
-        maxChildSize: 0.85,
-        expand: false,
-        builder: (context, scrollController) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 40, height: 4,
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-                ),
-              ),
-              const Text('Choisir un contrat',
-                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _bleu1)),
-              const SizedBox(height: 4),
-              const Text('SÃ©lectionnez le contrat concernÃ© par le sinistre',
-                  style: TextStyle(fontSize: 12, color: _gris)),
-              const SizedBox(height: 16),
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  children: [
-                    ...contratsActifs.map((c) => GestureDetector(
-                      onTap: () {
-                        Navigator.pop(context);
-                        _allerDeclarerSinistre(Map<String, dynamic>.from(c));
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0F4FF),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFDBEAFE)),
-                        ),
-                        child: Row(children: [
-                          const Icon(Icons.description_rounded, color: _bleu2, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(c['numero_contrat'] ?? 'â€”',
-                                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _texte)),
-                            Text(
-                              '${c['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers'} â€” Expire le ${c['date_fin'] ?? 'â€”'}',
-                              style: const TextStyle(fontSize: 12, color: _gris),
-                            ),
-                          ])),
-                          const Icon(Icons.chevron_right, color: _gris, size: 20),
-                        ]),
-                      ),
-                    )),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            ],
-          ),
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         ),
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: 20),
+          const Text('Choisir un contrat',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _bleu1)),
+          const SizedBox(height: 4),
+          const Text('Selectionnez le contrat concerne par le sinistre',
+              style: TextStyle(fontSize: 13, color: _gris)),
+          const SizedBox(height: 16),
+          ...contratsActifs.map((c) => GestureDetector(
+            onTap: () {
+              Navigator.pop(context);
+              _allerDeclarerSinistre(Map<String, dynamic>.from(c));
+            },
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _fond,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: _bleu2.withOpacity(0.2)),
+              ),
+              child: Row(children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(color: _bleu2.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.description_rounded, color: _bleu2, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(c['numero_contrat'] ?? '',
+                      style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _texte)),
+                  Text(
+                    '${c['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers'} - Expire le ${c['date_fin'] ?? ''}',
+                    style: const TextStyle(fontSize: 12, color: _gris),
+                  ),
+                ])),
+                const Icon(Icons.chevron_right_rounded, color: _gris),
+              ]),
+            ),
+          )),
+        ]),
       ),
     );
   }
 
-  Widget _pageHeader(String titre, IconData icon) {
+  // ── BANNIÈRE ERREUR RÉSEAU ─────────────────────────────────────────────────
+  Widget _buildErreurBanner() {
+    if (_erreurReseau == null) return const SizedBox.shrink();
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(colors: [_bleu1, _bleu2, _bleu3], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.only(bottomLeft: Radius.circular(28), bottomRight: Radius.circular(28)),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3CD),
+        border: Border.all(color: const Color(0xFFFFC107)),
+        borderRadius: BorderRadius.circular(14),
       ),
-      child: Row(children: [
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-          child: Icon(icon, color: Colors.white, size: 22),
-        ),
-        const SizedBox(width: 14),
-        Text(titre, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Icon(Icons.wifi_off_rounded, color: Color(0xFFB45309), size: 22),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Serveur inaccessible',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: Color(0xFF92400E))),
+          const SizedBox(height: 3),
+          Text(_erreurReseau!,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF78350F))),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: _loadAll,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: const Color(0xFFB45309),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text('Réessayer',
+                  style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+            ),
+          ),
+        ])),
       ]),
     );
   }
 
-  // â”€â”€ PAGE ACCUEIL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE ACCUEIL ──────────────────────────────────────────────────────────
   Widget _buildAccueil() {
     final prenom       = _userInfo['prenom'] ?? '';
-    final contratActif = _contrats.firstWhere((c) => c['statut'] == 'ACTIF', orElse: () => null);
-    final enAttente    = _contrats.where((c) => c['statut'] == 'EN_ATTENTE').length;
+    final contratActif = _contrats.firstWhere((c) => _estActif(c['statut']), orElse: () => null);
+    final enAttente    = _contrats.where((c) => c['statut'].toString().toUpperCase() == 'EN_ATTENTE').length;
 
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+          // ── Header ──
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
             decoration: const BoxDecoration(
-              gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bleu1, _bleu2, _bleu3]),
-              borderRadius: BorderRadius.only(bottomLeft: Radius.circular(32), bottomRight: Radius.circular(32)),
+              gradient: LinearGradient(
+                colors: [_bleu1, _bleu2, _bleu3],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(36),
+                bottomRight: Radius.circular(36),
+              ),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
                 Container(
-                  width: 52, height: 52,
+                  width: 50, height: 50,
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2), shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.4), width: 2),
+                    color: Colors.white.withOpacity(0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
                   ),
-                  child: const Icon(Icons.person_rounded, color: Colors.white, size: 28),
+                  child: const Icon(Icons.person_rounded, color: Colors.white, size: 26),
                 ),
                 const SizedBox(width: 14),
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Bonjour, $prenom !', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
-                  const Text('Espace assurÃ©', style: TextStyle(fontSize: 13, color: Colors.white70)),
+                  Text('Bonjour, $prenom !',
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
+                  const Text('Espace assure',
+                      style: TextStyle(fontSize: 13, color: Colors.white70)),
                 ])),
                 GestureDetector(
                   onTap: _deconnecter,
                   child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(10)),
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: const Icon(Icons.logout_rounded, color: Colors.white, size: 20),
                   ),
                 ),
               ]),
+
               if (enAttente > 0) ...[
                 const SizedBox(height: 16),
                 GestureDetector(
                   onTap: () => setState(() => _currentIndex = 3),
                   child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(color: _orange.withOpacity(0.85), borderRadius: BorderRadius.circular(14)),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: _orange.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                     child: Row(children: [
-                      const Icon(Icons.payment_rounded, color: Colors.white, size: 18),
+                      const Icon(Icons.access_time_rounded, color: Colors.white, size: 18),
                       const SizedBox(width: 10),
-                      Expanded(child: Text('$enAttente contrat(s) en attente de paiement',
-                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))),
-                      const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 14),
+                      Expanded(
+                        child: Text('$enAttente contrat(s) en attente de paiement',
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                      ),
+                      const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 13),
                     ]),
                   ),
                 ),
               ],
+
               const SizedBox(height: 16),
+
               GestureDetector(
                 onTap: () => setState(() => _currentIndex = 2),
                 child: Container(
-                  width: double.infinity, padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white.withOpacity(0.25), width: 1),
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white.withOpacity(0.25)),
                   ),
                   child: contratActif != null
                       ? Row(children: [
                           Container(
                             padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             child: const Icon(Icons.shield_rounded, color: Colors.white, size: 26),
                           ),
                           const SizedBox(width: 14),
@@ -297,103 +386,129 @@ class _DashboardPageState extends State<DashboardPage> {
                             Text(contratActif['numero_contrat'] ?? '',
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                             const SizedBox(height: 2),
-                            Text('Expire : ${contratActif['date_fin'] ?? 'â€”'}',
+                            Text('Expire : ${contratActif['date_fin'] ?? ''}',
                                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
                           ])),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                             decoration: BoxDecoration(color: _vert, borderRadius: BorderRadius.circular(20)),
-                            child: const Text('Actif', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+                            child: const Text('Actif',
+                                style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
                           ),
                         ])
                       : Row(children: [
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-                            child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
+                            child: const Icon(Icons.shield_outlined, color: Colors.white, size: 26),
                           ),
                           const SizedBox(width: 14),
                           const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text('Aucun contrat actif', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                            Text('Aucun contrat actif',
+                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                             SizedBox(height: 2),
-                            Text('Souscrire maintenant â†’', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            Text('Souscrire maintenant',
+                                style: TextStyle(color: Colors.white70, fontSize: 12)),
                           ])),
+                          const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14),
                         ]),
                 ),
               ),
             ]),
           ),
-          const SizedBox(height: 24),
+
+          // ── Bannière erreur réseau ──
+          _buildErreurBanner(),
+
+          const SizedBox(height: 28),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('Actions rapides', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _bleu1)),
+              const Text('Actions rapides',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
               const SizedBox(height: 14),
               Row(children: [
                 _quickAction(Icons.add_circle_rounded, 'Souscrire', _bleu2, onTap: _allerSouscription),
                 const SizedBox(width: 10),
-                _quickAction(Icons.payment_rounded, 'Paiements', _orange, onTap: () => setState(() => _currentIndex = 3)),
+                _quickAction(Icons.credit_card_rounded, 'Paiements', _orange, onTap: () => setState(() => _currentIndex = 3)),
                 const SizedBox(width: 10),
-                _quickAction(Icons.warning_amber_rounded, 'Sinistres', _rouge, onTap: () => setState(() => _currentIndex = 4)),
+                _quickAction(Icons.car_crash_rounded, 'Sinistres', _rouge, onTap: () => setState(() => _currentIndex = 4)),
                 const SizedBox(width: 10),
-                _quickAction(Icons.description_rounded, 'Contrats', _violet, onTap: () => setState(() => _currentIndex = 2)),
+                _quickAction(Icons.article_rounded, 'Contrats', _violet, onTap: () => setState(() => _currentIndex = 2)),
               ]),
             ]),
           ),
-          const SizedBox(height: 24),
+
+          const SizedBox(height: 28),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Mes vÃ©hicules', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _bleu1)),
-                TextButton(
-                  onPressed: () => setState(() => _currentIndex = 1),
-                  child: const Text('Voir tout', style: TextStyle(color: _bleu2, fontSize: 13)),
+                const Text('Mes vehicules',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
+                GestureDetector(
+                  onTap: () => setState(() => _currentIndex = 1),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _bleu2.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Text('Voir tout',
+                        style: TextStyle(color: _bleu2, fontSize: 12, fontWeight: FontWeight.w700)),
+                  ),
                 ),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               if (_loadingData)
                 const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: _bleu2)))
               else if (_vehicules.isEmpty)
-                _emptyCard('Aucun vÃ©hicule enregistrÃ©', 'Souscrivez pour ajouter votre premier vÃ©hicule.', Icons.directions_car_outlined)
+                _emptyCard('Aucun vehicule enregistre', 'Souscrivez pour ajouter votre premier vehicule.', Icons.directions_car_rounded)
               else
                 ..._vehicules.take(2).map((v) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _vehiculeCard(v))),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               _addCard('Nouvelle souscription', onTap: _allerSouscription),
             ]),
           ),
-          const SizedBox(height: 24),
+
+          const SizedBox(height: 28),
+
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('DerniÃ¨res activitÃ©s', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _bleu1)),
-              const SizedBox(height: 12),
+              const Text('Dernieres activites',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
+              const SizedBox(height: 14),
               if (_loadingData)
                 const SizedBox()
               else if (_activites.isEmpty)
-                _emptyCard('Aucune activitÃ©', 'Vos actions apparaÃ®tront ici.', Icons.history_rounded)
+                _emptyCard('Aucune activite', 'Vos actions apparaitront ici.', Icons.history_rounded)
               else
                 ..._activites.map((a) => _activiteItem(a)),
             ]),
           ),
+
           const SizedBox(height: 100),
         ]),
       ),
     );
   }
 
-  // â”€â”€ PAGE VÃ‰HICULES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE VEHICULES ────────────────────────────────────────────────────────
   Widget _buildVehiclesPage() {
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(child: _pageHeader('Mes vÃ©hicules', Icons.directions_car_rounded)),
+          SliverToBoxAdapter(child: _pageHeader('Mes vehicules', Icons.directions_car_rounded, _bleu1, _bleu3)),
+          SliverToBoxAdapter(child: _buildErreurBanner()),
           if (_loadingData)
             const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
           else if (_vehicules.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(24), child: _emptyCard('Aucun vÃ©hicule', 'Vos vÃ©hicules apparaÃ®tront ici aprÃ¨s souscription.', Icons.directions_car_outlined)))
+            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(20), child: _emptyCard('Aucun vehicule', 'Vos vehicules apparaitront ici apres souscription.', Icons.directions_car_rounded)))
           else
             SliverPadding(
               padding: const EdgeInsets.all(20),
@@ -408,18 +523,19 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  // â”€â”€ PAGE CONTRATS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE CONTRATS ─────────────────────────────────────────────────────────
   Widget _buildContratsPage() {
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(child: _pageHeader('Mes contrats', Icons.description_rounded)),
+          SliverToBoxAdapter(child: _pageHeader('Mes contrats', Icons.article_rounded, _bleu1, _bleu3)),
+          SliverToBoxAdapter(child: _buildErreurBanner()),
           if (_loadingData)
             const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
           else if (_contrats.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(24), child: _emptyCard('Aucun contrat', 'Souscrivez votre premiÃ¨re assurance.', Icons.description_outlined)))
+            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(20), child: _emptyCard('Aucun contrat', 'Souscrivez votre premiere assurance.', Icons.article_rounded)))
           else
             SliverPadding(
               padding: const EdgeInsets.all(20),
@@ -434,37 +550,41 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  // â”€â”€ PAGE PAIEMENTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE PAIEMENTS ────────────────────────────────────────────────────────
   Widget _buildPaiementsPage() {
-    final enAttente = _contrats.where((c) => c['statut'] == 'EN_ATTENTE').toList();
+    final enAttente = _contrats.where((c) => c['statut'].toString().toUpperCase() == 'EN_ATTENTE').toList();
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(child: _pageHeader('Mes paiements', Icons.payment_rounded)),
+          SliverToBoxAdapter(child: _pageHeader('Mes paiements', Icons.credit_card_rounded, const Color(0xFFB45309), const Color(0xFFF59E0B))),
+          SliverToBoxAdapter(child: _buildErreurBanner()),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [_orange.withOpacity(0.08), _orange.withOpacity(0.04)]),
-                  border: Border.all(color: _orange.withOpacity(0.3)),
+                  color: _orange.withOpacity(0.06),
+                  border: Border.all(color: _orange.withOpacity(0.25)),
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: _orange.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(color: _orange.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
                     child: const Icon(Icons.access_time_rounded, color: _orange, size: 20),
                   ),
                   const SizedBox(width: 12),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Rappel d\'expiration', style: TextStyle(fontWeight: FontWeight.w700, color: _orange, fontSize: 13)),
+                    const Text("Rappel d'expiration",
+                        style: TextStyle(fontWeight: FontWeight.w700, color: _orange, fontSize: 13)),
                     const SizedBox(height: 4),
                     Text(
-                      enAttente.isNotEmpty ? '${enAttente.length} contrat(s) en attente de paiement.' : 'Aucun contrat en attente de paiement.',
+                      enAttente.isNotEmpty
+                          ? '${enAttente.length} contrat(s) en attente de paiement.'
+                          : 'Aucun contrat en attente de paiement.',
                       style: const TextStyle(fontSize: 12, color: _texte),
                     ),
                     if (enAttente.isNotEmpty) ...[
@@ -474,7 +594,8 @@ class _DashboardPageState extends State<DashboardPage> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                           decoration: BoxDecoration(color: _orange, borderRadius: BorderRadius.circular(10)),
-                          child: const Text('ðŸ”„ Renouveler maintenant', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                          child: const Text('Renouveler maintenant',
+                              style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                         ),
                       ),
                     ],
@@ -487,14 +608,18 @@ class _DashboardPageState extends State<DashboardPage> {
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
               child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Historique des paiements', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _bleu1)),
+                const Text('Historique des paiements',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _texte)),
                 GestureDetector(
                   onTap: _allerNouveauPaiement,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(gradient: const LinearGradient(colors: [_bleu1, _bleu2]), borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(colors: [_bleu1, _bleu2]),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     child: const Row(children: [
-                      Icon(Icons.add, color: Colors.white, size: 16),
+                      Icon(Icons.add_rounded, color: Colors.white, size: 16),
                       SizedBox(width: 4),
                       Text('Nouveau', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                     ]),
@@ -506,7 +631,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (_loadingData)
             const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: _bleu2))))
           else if (_paiements.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun paiement', 'Vos paiements apparaÃ®tront ici.', Icons.receipt_long_outlined)))
+            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun paiement', 'Vos paiements apparaitront ici.', Icons.receipt_long_rounded)))
           else
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -518,7 +643,7 @@ class _DashboardPageState extends State<DashboardPage> {
           if (enAttente.isNotEmpty) ...[
             const SliverToBoxAdapter(child: Padding(
               padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-              child: Text('Contrats Ã  payer', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _bleu1)),
+              child: Text('Contrats a payer', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _texte)),
             )),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
@@ -528,54 +653,16 @@ class _DashboardPageState extends State<DashboardPage> {
               )),
             ),
           ],
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 100),
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [_violet.withOpacity(0.12), _violet.withOpacity(0.06)]),
-                  border: Border.all(color: _violet.withOpacity(0.3)),
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: Row(children: [
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: _violet.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-                    child: const Icon(Icons.autorenew_rounded, color: _violet, size: 24),
-                  ),
-                  const SizedBox(width: 14),
-                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('Renouvellement en un clic', style: TextStyle(fontWeight: FontWeight.w700, color: _violet, fontSize: 14)),
-                    const SizedBox(height: 2),
-                    Text(
-                      enAttente.isNotEmpty
-                          ? '${enAttente.first['numero_contrat']} â€” ${enAttente.first['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers'}'
-                          : 'Aucun contrat Ã  renouveler.',
-                      style: const TextStyle(fontSize: 12, color: _gris),
-                    ),
-                  ])),
-                  if (enAttente.isNotEmpty)
-                    GestureDetector(
-                      onTap: () => _allerPaiement(enAttente.first),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                        decoration: BoxDecoration(color: _violet, borderRadius: BorderRadius.circular(12)),
-                        child: const Text('Renouveler', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
-                      ),
-                    ),
-                ]),
-              ),
-            ),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
     );
   }
 
-  // â”€â”€ PAGE SINISTRES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE SINISTRES ────────────────────────────────────────────────────────
   Widget _buildSinistresPage() {
-    final contratsActifs = _contrats.where((c) => c['statut'] == 'ACTIF').toList();
+    final contratsActifs = _contrats.where((c) => _estActif(c['statut'])).toList();
+
     return RefreshIndicator(
       onRefresh: _loadAll, color: _rouge,
       child: CustomScrollView(
@@ -584,63 +671,75 @@ class _DashboardPageState extends State<DashboardPage> {
           SliverToBoxAdapter(
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(24, 24, 24, 22),
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFF991B1B), Color(0xFFDC2626), Color(0xFFEF4444)],
-                  begin: Alignment.topLeft, end: Alignment.bottomRight,
+                  colors: [Color(0xFF7F1D1D), Color(0xFFB91C1C), Color(0xFFEF4444)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-                borderRadius: BorderRadius.only(bottomLeft: Radius.circular(28), bottomRight: Radius.circular(28)),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(36),
+                  bottomRight: Radius.circular(36),
+                ),
               ),
               child: Row(children: [
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 22),
+                  child: const Icon(Icons.car_crash_rounded, color: Colors.white, size: 24),
                 ),
                 const SizedBox(width: 14),
-                const Expanded(child: Text('Mes sinistres', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white))),
-                if (contratsActifs.isNotEmpty)
-                  GestureDetector(
-                    onTap: () => _choisirContratPourSinistre(contratsActifs),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.white38),
-                      ),
-                      child: const Row(children: [
-                        Icon(Icons.add, color: Colors.white, size: 16),
-                        SizedBox(width: 4),
-                        Text('DÃ©clarer', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-                      ]),
+                const Expanded(child: Text('Mes sinistres',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white))),
+                GestureDetector(
+                  onTap: contratsActifs.isNotEmpty
+                      ? () => _choisirContratPourSinistre(contratsActifs)
+                      : () => _snackWarning('Aucun contrat actif disponible pour déclarer un sinistre.'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white38),
                     ),
+                    child: const Row(children: [
+                      Icon(Icons.add_rounded, color: Colors.white, size: 16),
+                      SizedBox(width: 4),
+                      Text('Declarer', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                    ]),
                   ),
+                ),
               ]),
             ),
           ),
+          SliverToBoxAdapter(child: _buildErreurBanner()),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
               child: Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEE2E2),
-                  borderRadius: BorderRadius.circular(14),
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: const Color(0xFFFCA5A5)),
                 ),
                 child: Row(children: [
-                  const Text('â„¹ï¸', style: TextStyle(fontSize: 20)),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(color: _rouge.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                    child: const Icon(Icons.info_outline_rounded, color: _rouge, size: 20),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text('DÃ©claration de sinistre', style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFFDC2626), fontSize: 13)),
-                    const SizedBox(height: 2),
+                    const Text('Declaration de sinistre',
+                        style: TextStyle(fontWeight: FontWeight.w700, color: _rouge, fontSize: 13)),
+                    const SizedBox(height: 3),
                     Text(
                       contratsActifs.isEmpty
-                          ? 'Vous n\'avez aucun contrat actif pour dÃ©clarer un sinistre.'
-                          : 'Vous avez ${contratsActifs.length} contrat(s) actif(s). Appuyez sur "DÃ©clarer" pour signaler un accident.',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF1A1A2E)),
+                          ? 'Aucun contrat actif trouve. Verifiez vos contrats ou contactez votre assureur.'
+                          : 'Vous avez ${contratsActifs.length} contrat(s) actif(s). Appuyez sur "Declarer" pour signaler un accident.',
+                      style: const TextStyle(fontSize: 12, color: _texte),
                     ),
                   ])),
                 ]),
@@ -650,7 +749,8 @@ class _DashboardPageState extends State<DashboardPage> {
           const SliverToBoxAdapter(
             child: Padding(
               padding: EdgeInsets.fromLTRB(20, 24, 20, 12),
-              child: Text('Historique des sinistres', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _bleu1)),
+              child: Text('Historique des sinistres',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _texte)),
             ),
           ),
           if (_loadingData)
@@ -659,7 +759,7 @@ class _DashboardPageState extends State<DashboardPage> {
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: _emptyCard('Aucun sinistre dÃ©clarÃ©', 'Vos dÃ©clarations de sinistre apparaÃ®tront ici.', Icons.shield_outlined),
+                child: _emptyCard('Aucun sinistre declare', 'Vos declarations de sinistre apparaitront ici.', Icons.shield_rounded),
               ),
             )
           else
@@ -676,94 +776,58 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 
-  Widget _sinistreCard(Map<String, dynamic> s) {
-    final statut = s['statut'] ?? 'DECLARE';
-    Color color; String label;
-    switch (statut) {
-      case 'DECLARE':  color = _orange; label = 'DÃ©clarÃ©';  break;
-      case 'EN_COURS': color = _bleu2;  label = 'En cours'; break;
-      case 'CLOTURE':   color = _vert;   label = 'RÃ©solu';   break;
-      case 'REJETE':   color = _rouge;  label = 'RejetÃ©';   break;
-      default:         color = _gris;   label = statut;
-    }
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
+  void _snackWarning(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor: _orange,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: _rouge.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.warning_amber_rounded, color: _rouge, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(s['numero_sinistre'] ?? 'â€”', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
-            Text((s['date_accident'] ?? '').toString().split('T').first, style: const TextStyle(fontSize: 12, color: _gris)),
-          ])),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-            child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
-          ),
-        ]),
-        const SizedBox(height: 12),
-        const Divider(height: 1, color: Color(0xFFF0F4FF)),
-        const SizedBox(height: 10),
-        Text(s['description'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: _texte)),
-        if (s['lieu_accident'] != null && s['lieu_accident'].toString().isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Row(children: [
-            const Icon(Icons.location_on, color: _gris, size: 14),
-            const SizedBox(width: 4),
-            Expanded(child: Text(s['lieu_accident'], style: const TextStyle(fontSize: 12, color: _gris), maxLines: 1, overflow: TextOverflow.ellipsis)),
-          ]),
-        ],
-      ]),
     );
   }
 
-  // â”€â”€ PAGE PROFIL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── PAGE PROFIL ───────────────────────────────────────────────────────────
   Widget _buildProfilPage() {
     final prenom  = _userInfo['prenom']  ?? '';
     final nom     = _userInfo['nom']     ?? '';
     final tel     = _userInfo['tel']     ?? '';
-    final nni     = _userInfo['nni']     ?? 'â€”';
-    final email   = _userInfo['email']   ?? 'â€”';
-    final adresse = _userInfo['adresse'] ?? 'â€”';
+    final nni     = _userInfo['nni']     ?? '';
+    final email   = _userInfo['email']   ?? '';
+    final adresse = _userInfo['adresse'] ?? '';
 
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
       child: Column(children: [
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(24, 40, 24, 32),
+          padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
           decoration: const BoxDecoration(
-            gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bleu1, _bleu2, _bleu3]),
-            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(32), bottomRight: Radius.circular(32)),
+            gradient: LinearGradient(colors: [_bleu1, _bleu2, _bleu3], begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36)),
           ),
           child: Column(children: [
             Container(
               width: 80, height: 80,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.2), shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.2),
+                shape: BoxShape.circle,
                 border: Border.all(color: Colors.white, width: 3),
               ),
               child: const Icon(Icons.person_rounded, color: Colors.white, size: 44),
             ),
             const SizedBox(height: 12),
-            Text('$prenom $nom', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
+            Text('$prenom $nom',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
             const SizedBox(height: 4),
             Text(tel, style: const TextStyle(color: Colors.white70, fontSize: 14)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _statProfil('${_vehicules.length}', 'VÃ©hicules'),
-              Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 20)),
+              _statProfil('${_vehicules.length}', 'Vehicules'),
+              Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 24)),
               _statProfil('${_contrats.length}', 'Contrats'),
-              Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 20)),
+              Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 24)),
               _statProfil('${_sinistres.length}', 'Sinistres'),
             ]),
           ]),
@@ -772,28 +836,29 @@ class _DashboardPageState extends State<DashboardPage> {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 20),
           child: Column(children: [
-            // âœ… NOUVEAU â€” Bouton Espace Personnel
             GestureDetector(
               onTap: _allerEspacePersonnel,
               child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [Color(0xFF1535A8), Color(0xFF1A56DB)]),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [BoxShadow(color: _bleu2.withOpacity(0.3), blurRadius: 12, offset: const Offset(0, 4))],
+                  gradient: const LinearGradient(colors: [_bleu1, _bleu2]),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [BoxShadow(color: _bleu2.withOpacity(0.3), blurRadius: 16, offset: const Offset(0, 6))],
                 ),
                 child: Row(children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.dashboard_rounded, color: Colors.white, size: 20),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.dashboard_rounded, color: Colors.white, size: 22),
                   ),
                   const SizedBox(width: 14),
                   const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Espace personnel', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white)),
+                    Text('Espace personnel',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white)),
                     SizedBox(height: 2),
-                    Text('RÃ©sumÃ©, sinistres, documents, alertes', style: TextStyle(fontSize: 11, color: Colors.white70)),
+                    Text('Resume, sinistres, documents, alertes',
+                        style: TextStyle(fontSize: 12, color: Colors.white70)),
                   ])),
                   const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 16),
                 ]),
@@ -801,52 +866,81 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
             const SizedBox(height: 4),
             _profileItem(Icons.person_outline_rounded, 'Nom complet', '$prenom $nom'),
-            _profileItem(Icons.phone_outlined, 'TÃ©lÃ©phone', tel),
-            _profileItem(Icons.badge_outlined, 'NNI', nni),
-            _profileItem(Icons.location_on_outlined, 'Adresse', adresse),
-            _profileItem(Icons.email_outlined, 'Email', email),
-            const SizedBox(height: 24),
+            _profileItem(Icons.phone_outlined, 'Telephone', tel),
+            _profileItem(Icons.badge_outlined, 'NNI', nni.isNotEmpty ? nni : 'Non renseigne'),
+            _profileItem(Icons.location_on_outlined, 'Adresse', adresse.isNotEmpty ? adresse : 'Non renseignee'),
+            _profileItem(Icons.email_outlined, 'Email', email.isNotEmpty ? email : 'Non renseigne'),
+            const SizedBox(height: 28),
             GestureDetector(
               onTap: _deconnecter,
               child: Container(
                 width: double.infinity, height: 54,
                 decoration: BoxDecoration(
-                  color: _rouge, borderRadius: BorderRadius.circular(30),
+                  color: _rouge,
+                  borderRadius: BorderRadius.circular(16),
                   boxShadow: [BoxShadow(color: _rouge.withOpacity(0.3), blurRadius: 16, offset: const Offset(0, 6))],
                 ),
                 child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   Icon(Icons.logout_rounded, color: Colors.white, size: 20),
-                  SizedBox(width: 8),
-                  Text('Se dÃ©connecter', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
+                  SizedBox(width: 10),
+                  Text('Se deconnecter',
+                      style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
                 ]),
               ),
             ),
           ]),
         ),
-        const SizedBox(height: 40),
+        const SizedBox(height: 48),
       ]),
     );
   }
 
-  // â”€â”€ WIDGETS UTILITAIRES â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── WIDGETS UTILITAIRES ───────────────────────────────────────────────────
+
+  Widget _pageHeader(String titre, IconData icon, Color c1, Color c2) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [c1, c2], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(36),
+          bottomRight: Radius.circular(36),
+        ),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+          child: Icon(icon, color: Colors.white, size: 24),
+        ),
+        const SizedBox(width: 14),
+        Text(titre, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
+      ]),
+    );
+  }
+
   Widget _quickAction(IconData icon, String label, Color color, {required VoidCallback onTap}) {
     return Expanded(
       child: GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 16),
           decoration: BoxDecoration(
-            color: Colors.white, borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(color: color.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 4))],
+            color: _card,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 12, offset: const Offset(0, 4))],
           ),
           child: Column(children: [
             Container(
-              padding: const EdgeInsets.all(9),
-              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-              child: Icon(icon, color: color, size: 20),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+              child: Icon(icon, color: color, size: 22),
             ),
-            const SizedBox(height: 7),
-            Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _texte)),
+            const SizedBox(height: 8),
+            Text(label,
+                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: _texte),
+                textAlign: TextAlign.center),
           ]),
         ),
       ),
@@ -854,44 +948,57 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _vehiculeCard(Map<String, dynamic> v) {
-    final estAssure = _contrats.any((c) => c['vehicule_id'].toString() == v['id'].toString() && c['statut'] == 'ACTIF');
+    final estAssure = _contrats.any(
+      (c) => c['vehicule_id'].toString() == v['id'].toString() && _estActif(c['statut']),
+    );
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: _bleu2.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4))],
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Row(children: [
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: _bleu3.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+          decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(14)),
           child: const Icon(Icons.directions_car_rounded, color: _bleu2, size: 26),
         ),
         const SizedBox(width: 14),
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${v['marque'] ?? ''} ${v['modele'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: _texte)),
-          const SizedBox(height: 2),
-          Text('${v['immatriculation'] ?? ''} Â· ${v['annee'] ?? ''}', style: const TextStyle(fontSize: 12, color: _gris)),
+          Text('${v['marque'] ?? ''} ${v['modele'] ?? ''}',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: _texte)),
+          const SizedBox(height: 3),
+          Text('${v['immatriculation'] ?? ''}  •  ${v['annee'] ?? ''}',
+              style: const TextStyle(fontSize: 12, color: _gris)),
         ])),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(color: estAssure ? _vert.withOpacity(0.1) : _rouge.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-          child: Text(estAssure ? 'AssurÃ©' : 'Non assurÃ©', style: TextStyle(color: estAssure ? _vert : _rouge, fontSize: 11, fontWeight: FontWeight.w700)),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: estAssure ? _vert.withOpacity(0.1) : _rouge.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            estAssure ? 'Assure' : 'Non assure',
+            style: TextStyle(color: estAssure ? _vert : _rouge, fontSize: 11, fontWeight: FontWeight.w700),
+          ),
         ),
       ]),
     );
   }
 
   Widget _contratCard(Map<String, dynamic> c) {
-    final statut      = c['statut'] ?? '';
-    final isActif     = statut == 'ACTIF';
+    final statut      = c['statut']?.toString().toUpperCase() ?? '';
+    final isActif     = _estActif(c['statut']);
     final isEnAttente = statut == 'EN_ATTENTE';
     final color       = isActif ? _vert : (isEnAttente ? _orange : _rouge);
+    final label       = isActif ? 'Actif' : (isEnAttente ? 'En attente' : c['statut'] ?? '');
     final type        = c['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers';
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -899,26 +1006,27 @@ class _DashboardPageState extends State<DashboardPage> {
           Container(
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(color: _violet.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.description_rounded, color: _violet, size: 22),
+            child: const Icon(Icons.article_rounded, color: _violet, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(c['numero_contrat'] ?? 'â€”', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
+            Text(c['numero_contrat'] ?? '',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
             Text(type, style: const TextStyle(fontSize: 12, color: _gris)),
           ])),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-            child: Text(statut, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+            child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
           ),
         ]),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         const Divider(height: 1, color: Color(0xFFF0F4FF)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 14),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          _contratInfo('Prime', '${c['prime_montant'] ?? 'â€”'} MRU'),
-          _contratInfo('DÃ©but', c['date_debut'] ?? 'â€”'),
-          _contratInfo('Fin', c['date_fin'] ?? 'â€”'),
+          _infoChip('Prime', '${c['prime_montant'] ?? ''} MRU'),
+          _infoChip('Debut', c['date_debut'] ?? ''),
+          _infoChip('Fin', c['date_fin'] ?? ''),
         ]),
         if (isEnAttente) ...[
           const SizedBox(height: 14),
@@ -926,16 +1034,17 @@ class _DashboardPageState extends State<DashboardPage> {
             onTap: () => _allerPaiement(c),
             child: Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 13),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 gradient: const LinearGradient(colors: [_bleu1, _bleu2]),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(14),
                 boxShadow: [BoxShadow(color: _bleu2.withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
               ),
               child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.payment_rounded, color: Colors.white, size: 18),
+                Icon(Icons.credit_card_rounded, color: Colors.white, size: 18),
                 SizedBox(width: 8),
-                Text('ðŸ’³ Payer maintenant', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+                Text('Payer maintenant',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
               ]),
             ),
           ),
@@ -945,44 +1054,110 @@ class _DashboardPageState extends State<DashboardPage> {
   }
 
   Widget _paiementCard(Map<String, dynamic> p) {
-    final statut = (p['statut'] ?? '').toString();
+    final statut = (p['statut'] ?? '').toString().toUpperCase();
     final color  = statut == 'CONFIRME' ? _vert : _orange;
-    final label  = statut == 'CONFIRME' ? 'ConfirmÃ©' : 'En attente';
+    final label  = statut == 'CONFIRME' ? 'Confirme' : 'En attente';
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(children: [
         Row(children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            child: Icon(Icons.receipt_long_rounded, color: color, size: 22),
+          ),
+          const SizedBox(width: 12),
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(p['reference'] ?? 'â€”', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
-            Text(p['contrat_numero'] ?? p['contrat']?.toString() ?? '', style: const TextStyle(fontSize: 12, color: _gris)),
+            Text(p['reference'] ?? '',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
+            Text(p['contrat_numero'] ?? p['contrat']?.toString() ?? '',
+                style: const TextStyle(fontSize: 12, color: _gris)),
           ])),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+            child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+          ),
+        ]),
+        const SizedBox(height: 14),
+        const Divider(height: 1, color: Color(0xFFF0F4FF)),
+        const SizedBox(height: 14),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          _infoChip('Montant', '${p['montant'] ?? ''} MRU'),
+          _infoChip('Methode', p['methode'] ?? ''),
+          _infoChip('Date', (p['date_paiement'] ?? '').toString().split('T').first),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _sinistreCard(Map<String, dynamic> s) {
+    final statut = s['statut'] ?? 'DECLARE';
+    Color color; String label;
+    switch (statut.toString().toUpperCase()) {
+      case 'DECLARE':  color = _orange; label = 'Declare';  break;
+      case 'EN_COURS': color = _bleu2;  label = 'En cours'; break;
+      case 'CLOTURE':  color = _vert;   label = 'Resolu';   break;
+      case 'REJETE':   color = _rouge;  label = 'Rejete';   break;
+      default:         color = _gris;   label = statut;
+    }
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: _rouge.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.car_crash_rounded, color: _rouge, size: 22),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(s['numero_sinistre'] ?? '',
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: _texte)),
+            Text((s['date_accident'] ?? '').toString().split('T').first,
+                style: const TextStyle(fontSize: 12, color: _gris)),
+          ])),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
             child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
           ),
         ]),
         const SizedBox(height: 12),
         const Divider(height: 1, color: Color(0xFFF0F4FF)),
-        const SizedBox(height: 12),
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          _contratInfo('Montant', '${p['montant'] ?? 'â€”'} MRU'),
-          _contratInfo('MÃ©thode', p['methode'] ?? 'â€”'),
-          _contratInfo('Date', (p['date_paiement'] ?? '').toString().split('T').first),
-        ]),
+        const SizedBox(height: 10),
+        Text(s['description'] ?? '',
+            maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, color: _texte)),
+        if (s['lieu_accident'] != null && s['lieu_accident'].toString().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            const Icon(Icons.location_on_rounded, color: _gris, size: 14),
+            const SizedBox(width: 4),
+            Expanded(child: Text(s['lieu_accident'],
+                style: const TextStyle(fontSize: 12, color: _gris),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ]),
+        ],
       ]),
     );
   }
 
-  Widget _contratInfo(String label, String value) => Column(
+  Widget _infoChip(String label, String value) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(label, style: const TextStyle(fontSize: 11, color: _gris)),
-      const SizedBox(height: 2),
+      Text(label, style: const TextStyle(fontSize: 11, color: _gris, fontWeight: FontWeight.w500)),
+      const SizedBox(height: 3),
       Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _texte)),
     ],
   );
@@ -991,21 +1166,25 @@ class _DashboardPageState extends State<DashboardPage> {
     margin: const EdgeInsets.only(bottom: 10),
     padding: const EdgeInsets.all(14),
     decoration: BoxDecoration(
-      color: Colors.white, borderRadius: BorderRadius.circular(14),
+      color: _card,
+      borderRadius: BorderRadius.circular(14),
       boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
     ),
     child: Row(children: [
       Container(
         padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(color: _bleu2.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-        child: const Icon(Icons.description_rounded, color: _bleu2, size: 18),
+        decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+        child: const Icon(Icons.article_rounded, color: _bleu2, size: 18),
       ),
       const SizedBox(width: 12),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(a['titre'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _texte)),
-        Text(a['detail'] ?? '', style: const TextStyle(fontSize: 11, color: _gris)),
+        Text(a['titre'] ?? '',
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: _texte)),
+        Text(a['detail'] ?? '',
+            style: const TextStyle(fontSize: 11, color: _gris)),
       ])),
-      Text(a['date']?.toString().split('T').first ?? '', style: const TextStyle(fontSize: 11, color: _gris)),
+      Text((a['date'] ?? '').toString().split('T').first,
+          style: const TextStyle(fontSize: 11, color: _gris)),
     ]),
   );
 
@@ -1014,34 +1193,49 @@ class _DashboardPageState extends State<DashboardPage> {
     child: Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
+        color: _card,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _bleu2.withOpacity(0.3), width: 1.5),
       ),
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(Icons.add_circle_outline_rounded, color: _bleu2, size: 20),
-        const SizedBox(width: 8),
-        Text(label, style: const TextStyle(color: _bleu2, fontWeight: FontWeight.w600, fontSize: 14)),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(color: _bleu2.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+          child: const Icon(Icons.add_rounded, color: _bleu2, size: 18),
+        ),
+        const SizedBox(width: 10),
+        Text(label, style: const TextStyle(color: _bleu2, fontWeight: FontWeight.w700, fontSize: 14)),
       ]),
     ),
   );
 
   Widget _emptyCard(String titre, String sous, IconData icon) => Container(
-    width: double.infinity, padding: const EdgeInsets.all(24),
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
     decoration: BoxDecoration(
-      color: Colors.white, borderRadius: BorderRadius.circular(16),
-      border: Border.all(color: const Color(0xFFE0E8F5), width: 1),
+      color: _card,
+      borderRadius: BorderRadius.circular(18),
+      border: Border.all(color: const Color(0xFFE5E7EB)),
     ),
     child: Column(children: [
-      Icon(icon, color: const Color(0xFFADBDD8), size: 36),
-      const SizedBox(height: 10),
-      Text(titre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF4A5568))),
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: _bleu2.withOpacity(0.06), shape: BoxShape.circle),
+        child: Icon(icon, color: const Color(0xFFADBDD8), size: 32),
+      ),
+      const SizedBox(height: 12),
+      Text(titre,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF374151))),
       const SizedBox(height: 4),
-      Text(sous, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: _gris)),
+      Text(sous,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12, color: _gris)),
     ]),
   );
 
   Widget _statProfil(String value, String label) => Column(children: [
-    Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)),
+    Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white)),
+    const SizedBox(height: 2),
     Text(label, style: const TextStyle(fontSize: 11, color: Colors.white70)),
   ]);
 
@@ -1049,20 +1243,26 @@ class _DashboardPageState extends State<DashboardPage> {
     margin: const EdgeInsets.only(bottom: 10),
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
-      color: Colors.white, borderRadius: BorderRadius.circular(14),
+      color: _card,
+      borderRadius: BorderRadius.circular(14),
       boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
     ),
     child: Row(children: [
-      Icon(icon, color: _bleu2, size: 20),
+      Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(10)),
+        child: Icon(icon, color: _bleu2, size: 20),
+      ),
       const SizedBox(width: 14),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(label, style: const TextStyle(fontSize: 11, color: _gris, fontWeight: FontWeight.w500)),
-        const SizedBox(height: 2),
+        const SizedBox(height: 3),
         Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _texte)),
       ])),
     ]),
   );
 
+  // ── BUILD PRINCIPAL ───────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -1073,6 +1273,7 @@ class _DashboardPageState extends State<DashboardPage> {
       _buildSinistresPage(),
       _buildProfilPage(),
     ];
+
     return Scaffold(
       backgroundColor: _fond,
       body: SafeArea(child: pages[_currentIndex]),
@@ -1096,10 +1297,10 @@ class _DashboardPageState extends State<DashboardPage> {
             elevation: 0,
             items: const [
               BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home_rounded), label: 'Accueil'),
-              BottomNavigationBarItem(icon: Icon(Icons.directions_car_outlined), activeIcon: Icon(Icons.directions_car_rounded), label: 'VÃ©hicules'),
-              BottomNavigationBarItem(icon: Icon(Icons.description_outlined), activeIcon: Icon(Icons.description_rounded), label: 'Contrats'),
-              BottomNavigationBarItem(icon: Icon(Icons.payment_outlined), activeIcon: Icon(Icons.payment_rounded), label: 'Paiements'),
-              BottomNavigationBarItem(icon: Icon(Icons.warning_amber_outlined), activeIcon: Icon(Icons.warning_amber_rounded), label: 'Sinistres'),
+              BottomNavigationBarItem(icon: Icon(Icons.directions_car_outlined), activeIcon: Icon(Icons.directions_car_rounded), label: 'Vehicules'),
+              BottomNavigationBarItem(icon: Icon(Icons.article_outlined), activeIcon: Icon(Icons.article_rounded), label: 'Contrats'),
+              BottomNavigationBarItem(icon: Icon(Icons.credit_card_outlined), activeIcon: Icon(Icons.credit_card_rounded), label: 'Paiements'),
+              BottomNavigationBarItem(icon: Icon(Icons.car_crash_outlined), activeIcon: Icon(Icons.car_crash_rounded), label: 'Sinistres'),
               BottomNavigationBarItem(icon: Icon(Icons.person_outline_rounded), activeIcon: Icon(Icons.person_rounded), label: 'Profil'),
             ],
           ),

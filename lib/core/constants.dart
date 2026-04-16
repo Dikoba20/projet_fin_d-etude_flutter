@@ -1,7 +1,11 @@
-class AppConstants {
-  static const String baseUrl = "http://localhost:8000/api";
-}
+import 'package:flutter/foundation.dart';
 
-//class AppConstants {
-  //static const String baseUrl = "http://172.20.10.3:8000/api";
-//}
+class AppConstants {
+  static String get baseUrl {
+    if (kIsWeb) {
+      return "http://localhost:8000/api"; // pour Chrome
+    } else {
+      return "http://192.168.100.161:8000/api"; // pour téléphone
+    }
+  }
+}

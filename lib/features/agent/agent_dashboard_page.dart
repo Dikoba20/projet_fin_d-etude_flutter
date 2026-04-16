@@ -1,0 +1,853 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import '../../core/services/auth_service.dart';
+import '../../core/services/agent_service.dart';
+import '../auth/login_page.dart';
+
+// ════════════════════════════════════════════════════════════
+// AGENT DASHBOARD PAGE — AssurAncy
+// ✅ Web    → sidebar + tableaux (layout large écran)
+// ✅ Mobile → BottomNav + cards  (layout mobile natif)
+// ════════════════════════════════════════════════════════════
+
+const _kPrimary     = Color(0xFF1A56DB);
+const _kPrimaryDark = Color(0xFF0D3A9E);
+const _kBg          = Color(0xFFF4F7FE);
+const _kSidebar     = Color(0xFF0F2557);
+const _kSidebarText = Color(0xFFB8CCF0);
+const _kWhite       = Colors.white;
+const _kBorder      = Color(0xFFE4ECF7);
+const _kTextPrimary = Color(0xFF1A1A2E);
+const _kTextSecond  = Color(0xFF6B7A99);
+
+// Palette mobile
+const _bleu1  = Color(0xFF1535A8);
+const _bleu2  = Color(0xFF1A56DB);
+const _bleu3  = Color(0xFF3B82F6);
+const _vert   = Color(0xFF16A34A);
+const _rouge  = Color(0xFFDC2626);
+const _orange = Color(0xFFEA580C);
+const _fond   = Color(0xFFF5F7FF);
+const _texte  = Color(0xFF111827);
+const _gris   = Color(0xFF6B7280);
+const _card   = Color(0xFFFFFFFF);
+
+enum AgentSection { dashboard, souscriptions, portefeuille, messagerie, sinistres, rapports }
+
+// ════════════════════════════════════════════════════════════
+// ENTRY POINT — détecte la plateforme
+// ════════════════════════════════════════════════════════════
+class AgentDashboardPage extends StatelessWidget {
+  const AgentDashboardPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return kIsWeb ? const _AgentWebDashboard() : const _AgentMobileDashboard();
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// VERSION WEB — sidebar + tableaux
+// ════════════════════════════════════════════════════════════
+class _AgentWebDashboard extends StatefulWidget {
+  const _AgentWebDashboard();
+  @override State<_AgentWebDashboard> createState() => _AgentWebDashboardState();
+}
+
+class _AgentWebDashboardState extends State<_AgentWebDashboard> {
+  AgentSection _currentSection = AgentSection.dashboard;
+  bool _sidebarCollapsed = false;
+  final _authService  = AuthService();
+  final _agentService = AgentService();
+  String _agentNom = 'Agent', _agentPrenom = '', _agentEmail = '';
+
+  @override void initState() { super.initState(); _loadAgentInfo(); }
+
+  Future<void> _loadAgentInfo() async {
+    try {
+      final user = await _authService.getUserInfo();
+      if (mounted) setState(() {
+        _agentNom    = user['nom']    ?? 'Agent';
+        _agentPrenom = user['prenom'] ?? '';
+        _agentEmail  = user['email']  ?? '';
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _logout() async {
+    final confirm = await showDialog<bool>(context: context, builder: (_) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Déconnexion', style: TextStyle(fontWeight: FontWeight.w700, color: _kTextPrimary)),
+      content: const Text('Voulez-vous vraiment vous déconnecter ?', style: TextStyle(color: _kTextSecond)),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Annuler', style: TextStyle(color: _kTextSecond))),
+        TextButton(onPressed: () => Navigator.pop(context, true),  child: const Text('Déconnecter', style: TextStyle(color: Colors.red, fontWeight: FontWeight.w700))),
+      ],
+    ));
+    if (confirm == true && mounted) {
+      await _authService.deconnecter();
+      Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+    }
+  }
+
+  List<_NavItem> get _navItems => [
+    _NavItem(AgentSection.dashboard,     Icons.dashboard_rounded,           'Tableau de bord'),
+    _NavItem(AgentSection.souscriptions, Icons.assignment_rounded,          'Souscriptions'),
+    _NavItem(AgentSection.portefeuille,  Icons.people_alt_rounded,          'Portefeuille'),
+    _NavItem(AgentSection.messagerie,    Icons.chat_bubble_outline_rounded, 'Messagerie'),
+    _NavItem(AgentSection.sinistres,     Icons.car_crash_rounded,           'Sinistres'),
+    _NavItem(AgentSection.rapports,      Icons.bar_chart_rounded,           'Rapports'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBg,
+      body: Row(children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 250), curve: Curves.easeInOut,
+          width: _sidebarCollapsed ? 70 : 240, color: _kSidebar,
+          child: Column(children: [
+            _buildSidebarHeader(),
+            if (!_sidebarCollapsed) _buildSidebarProfil() else const SizedBox(height: 12),
+            Expanded(child: ListView(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), children: _navItems.map(_buildNavItem).toList())),
+            Padding(padding: const EdgeInsets.all(8), child: _buildLogoutButton()),
+          ]),
+        ),
+        Expanded(child: Column(children: [_buildTopBar(), Expanded(child: _buildContent())])),
+      ]),
+    );
+  }
+
+  Widget _buildSidebarHeader() {
+    return Container(height: 64, padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(color: _kPrimaryDark, border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.08)))),
+      child: Row(children: [
+        Container(width: 36, height: 36, decoration: BoxDecoration(color: _kPrimary, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.shield_rounded, color: _kWhite, size: 22)),
+        if (!_sidebarCollapsed) ...[const SizedBox(width: 10), const Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('AssurAncy', style: TextStyle(color: _kWhite, fontSize: 15, fontWeight: FontWeight.w800)),
+          Text('Espace Agent', style: TextStyle(color: _kSidebarText, fontSize: 10)),
+        ]))],
+        IconButton(icon: Icon(_sidebarCollapsed ? Icons.chevron_right_rounded : Icons.chevron_left_rounded, color: _kSidebarText, size: 20),
+            onPressed: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed)),
+      ]));
+  }
+
+  Widget _buildSidebarProfil() {
+    return Container(margin: const EdgeInsets.all(12), padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.white.withOpacity(0.08))),
+      child: Row(children: [
+        _WebAvatar(nom: _agentNom, prenom: _agentPrenom),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('$_agentPrenom $_agentNom', style: const TextStyle(color: _kWhite, fontSize: 13, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(_agentEmail, style: const TextStyle(color: _kSidebarText, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [CircleAvatar(radius: 3, backgroundColor: Colors.green), SizedBox(width: 4), Text('En ligne', style: TextStyle(color: Colors.green, fontSize: 10, fontWeight: FontWeight.w600))])),
+        ])),
+      ]));
+  }
+
+  Widget _buildNavItem(_NavItem item) {
+    final isActive = _currentSection == item.section;
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Material(color: Colors.transparent, borderRadius: BorderRadius.circular(10),
+        child: InkWell(borderRadius: BorderRadius.circular(10), onTap: () => setState(() => _currentSection = item.section),
+          child: AnimatedContainer(duration: const Duration(milliseconds: 200),
+            padding: EdgeInsets.symmetric(horizontal: _sidebarCollapsed ? 0 : 12, vertical: 11),
+            decoration: BoxDecoration(color: isActive ? _kPrimary.withOpacity(0.25) : Colors.transparent, borderRadius: BorderRadius.circular(10),
+                border: isActive ? Border.all(color: _kPrimary.withOpacity(0.4), width: 0.5) : null),
+            child: Row(mainAxisAlignment: _sidebarCollapsed ? MainAxisAlignment.center : MainAxisAlignment.start, children: [
+              Icon(item.icon, size: 20, color: isActive ? _kWhite : _kSidebarText),
+              if (!_sidebarCollapsed) ...[const SizedBox(width: 12), Expanded(child: Text(item.label, style: TextStyle(color: isActive ? _kWhite : _kSidebarText, fontSize: 13.5, fontWeight: isActive ? FontWeight.w600 : FontWeight.w400)))],
+            ])))));
+  }
+
+  Widget _buildLogoutButton() {
+    return Material(color: Colors.transparent, borderRadius: BorderRadius.circular(10),
+      child: InkWell(borderRadius: BorderRadius.circular(10), onTap: _logout,
+        child: Container(padding: EdgeInsets.symmetric(horizontal: _sidebarCollapsed ? 0 : 12, vertical: 11),
+          child: Row(mainAxisAlignment: _sidebarCollapsed ? MainAxisAlignment.center : MainAxisAlignment.start, children: [
+            const Icon(Icons.logout_rounded, size: 20, color: Colors.redAccent),
+            if (!_sidebarCollapsed) ...[const SizedBox(width: 12), const Text('Déconnexion', style: TextStyle(color: Colors.redAccent, fontSize: 13.5, fontWeight: FontWeight.w500))],
+          ]))));
+  }
+
+  Widget _buildTopBar() {
+    final titles = {AgentSection.dashboard: 'Tableau de bord', AgentSection.souscriptions: 'Souscriptions', AgentSection.portefeuille: 'Portefeuille clients', AgentSection.messagerie: 'Messagerie', AgentSection.sinistres: 'Sinistres', AgentSection.rapports: 'Rapports'};
+    return Container(height: 64, padding: const EdgeInsets.symmetric(horizontal: 24),
+      decoration: BoxDecoration(color: _kWhite, border: Border(bottom: BorderSide(color: _kBorder)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+      child: Row(children: [Text(titles[_currentSection] ?? '', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: _kTextPrimary)), const Spacer(), _WebAvatar(nom: _agentNom, prenom: _agentPrenom, size: 36)]));
+  }
+
+  Widget _buildContent() {
+    switch (_currentSection) {
+      case AgentSection.dashboard:     return AgentHomePanel(agentService: _agentService);
+      case AgentSection.souscriptions: return AgentSouscriptionsPanel(agentService: _agentService);
+      case AgentSection.portefeuille:  return AgentPortefeuillePanel(agentService: _agentService);
+      case AgentSection.messagerie:    return AgentMessageriePanel(agentService: _agentService);
+      case AgentSection.sinistres:     return AgentSinistresPanel(agentService: _agentService);
+      case AgentSection.rapports:      return AgentRapportsPanel(agentService: _agentService);
+    }
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// VERSION MOBILE — BottomNav + cards
+// ════════════════════════════════════════════════════════════
+class _AgentMobileDashboard extends StatefulWidget {
+  const _AgentMobileDashboard();
+  @override State<_AgentMobileDashboard> createState() => _AgentMobileDashboardState();
+}
+
+class _AgentMobileDashboardState extends State<_AgentMobileDashboard> {
+  final _authService  = AuthService();
+  final _agentService = AgentService();
+  int    _currentIndex = 0;
+  bool   _loading      = true;
+  String _agentNom = '', _agentPrenom = '', _agentEmail = '';
+  Map<String, dynamic> _kpis = {};
+  List _contrats = [], _filtreContrats = [], _clients = [], _sinistres = [];
+  String _filtreStatut = 'EN_ATTENTE';
+
+  @override void initState() { super.initState(); _loadAll(); }
+
+  Future<void> _loadAll() async {
+    setState(() => _loading = true);
+    try {
+      final info = await _authService.getUserInfo();
+      final dash = await _agentService.getDashboard();
+      final cont = await _agentService.getContrats(statut: _filtreStatut);
+      final cli  = await _agentService.getClients();
+      final sin  = await _agentService.getSinistres();
+      if (mounted) setState(() {
+        _agentNom = info['nom'] ?? ''; _agentPrenom = info['prenom'] ?? ''; _agentEmail = info['email'] ?? '';
+        if (dash['success'] == true) _kpis = dash['kpis'] ?? {};
+        if (cont['success'] == true) { _contrats = cont['contrats'] ?? []; _filtreContrats = List.from(_contrats); }
+        if (cli['success']  == true) _clients   = cli['utilisateurs'] ?? [];
+        if (sin['success']  == true) _sinistres  = sin['sinistres']   ?? [];
+      });
+    } catch (_) {}
+    finally { if (mounted) setState(() => _loading = false); }
+  }
+
+  Future<void> _deconnecter() async {
+    await _authService.deconnecter();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const LoginPage()), (_) => false);
+  }
+
+  Future<void> _validerContrat(Map c, String statut) async {
+    final res = await _agentService.updateContratStatut(c['id'], statut);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(res['success'] == true ? 'Contrat mis à jour : $statut' : res['message'] ?? 'Erreur'),
+      backgroundColor: res['success'] == true ? _vert : _rouge));
+    if (res['success'] == true) _loadAll();
+  }
+
+  // ── PAGE ACCUEIL
+  Widget _buildAccueil() {
+    return RefreshIndicator(onRefresh: _loadAll, color: _bleu2,
+      child: SingleChildScrollView(physics: const AlwaysScrollableScrollPhysics(), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(width: double.infinity, padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
+          decoration: const BoxDecoration(gradient: LinearGradient(colors: [_bleu1, _bleu2, _bleu3], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36))),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Container(width: 50, height: 50, decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle, border: Border.all(color: Colors.white.withOpacity(0.5), width: 2)), child: const Icon(Icons.badge_rounded, color: Colors.white, size: 26)),
+              const SizedBox(width: 14),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('Bonjour, $_agentPrenom !', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
+                const Text("Agent d'assurance", style: TextStyle(fontSize: 13, color: Colors.white70)),
+              ])),
+              GestureDetector(onTap: _deconnecter, child: Container(padding: const EdgeInsets.all(9), decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.logout_rounded, color: Colors.white, size: 20))),
+            ]),
+            if ((_kpis['contrats_attente'] ?? 0) > 0) ...[
+              const SizedBox(height: 16),
+              GestureDetector(onTap: () => setState(() => _currentIndex = 1),
+                child: Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  decoration: BoxDecoration(color: _orange.withOpacity(0.9), borderRadius: BorderRadius.circular(14)),
+                  child: Row(children: [
+                    const Icon(Icons.access_time_rounded, color: Colors.white, size: 18), const SizedBox(width: 10),
+                    Expanded(child: Text('${_kpis['contrats_attente']} souscription(s) en attente', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 13),
+                  ]))),
+            ],
+            const SizedBox(height: 16),
+            Container(padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.15), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white.withOpacity(0.25))),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+                _hStat('${_kpis['contrats_attente'] ?? 0}', 'Attente'), _divStat(),
+                _hStat('${_kpis['contrats_actifs']  ?? 0}', 'Actifs'),  _divStat(),
+                _hStat('${_kpis['sinistres_cours']  ?? 0}', 'Sinistres'), _divStat(),
+                _hStat('${(_kpis['primes_mois'] ?? 0).toStringAsFixed(0)}', 'MRU'),
+              ])),
+          ])),
+        const SizedBox(height: 24),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Actions rapides', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
+          const SizedBox(height: 14),
+          Row(children: [
+            _quickAction(Icons.assignment_rounded, 'Dossiers',  _bleu2,  onTap: () => setState(() => _currentIndex = 1)),
+            const SizedBox(width: 10),
+            _quickAction(Icons.people_alt_rounded,  'Clients',   _orange, onTap: () => setState(() => _currentIndex = 2)),
+            const SizedBox(width: 10),
+            _quickAction(Icons.car_crash_rounded,   'Sinistres', _rouge,  onTap: () => setState(() => _currentIndex = 3)),
+            const SizedBox(width: 10),
+            _quickAction(Icons.bar_chart_rounded,   'Rapports',  _vert,   onTap: () => setState(() => _currentIndex = 4)),
+          ]),
+        ])),
+        const SizedBox(height: 24),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Dernières souscriptions', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
+            GestureDetector(onTap: () => setState(() => _currentIndex = 1), child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(20)), child: const Text('Voir tout', style: TextStyle(color: _bleu2, fontSize: 12, fontWeight: FontWeight.w700)))),
+          ]),
+          const SizedBox(height: 14),
+          if (_loading) const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: _bleu2)))
+          else if (_contrats.isEmpty) _emptyCard('Aucune souscription', 'Les dossiers apparaîtront ici.', Icons.assignment_rounded)
+          else ..._contrats.take(3).map((c) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _contratCard(c))),
+        ])),
+        const SizedBox(height: 100),
+      ])));
+  }
+
+  // ── PAGE SOUSCRIPTIONS
+  Widget _buildSouscriptionsPage() {
+    final statuts = [['En attente','EN_ATTENTE'],['Actif','ACTIF'],['Tous','TOUS']];
+    return RefreshIndicator(onRefresh: _loadAll, color: _bleu2,
+      child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
+        SliverToBoxAdapter(child: _pageHeader('Dossiers', Icons.assignment_rounded, _bleu1, _bleu3)),
+        SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: statuts.map((f) => Padding(padding: const EdgeInsets.only(right: 8), child: GestureDetector(
+            onTap: () async {
+              setState(() => _filtreStatut = f[1]);
+              final res = await _agentService.getContrats(statut: f[1]);
+              if (res['success'] == true && mounted) setState(() => _filtreContrats = res['contrats'] ?? []);
+            },
+            child: AnimatedContainer(duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(color: _filtreStatut == f[1] ? _bleu2 : _card, borderRadius: BorderRadius.circular(20), border: Border.all(color: _filtreStatut == f[1] ? _bleu2 : const Color(0xFFE5E7EB))),
+              child: Text(f[0], style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _filtreStatut == f[1] ? Colors.white : _gris)))))).toList())))),
+        const SliverToBoxAdapter(child: SizedBox(height: 16)),
+        if (_loading) const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
+        else if (_filtreContrats.isEmpty) SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun dossier', 'Aucune souscription ici.', Icons.assignment_rounded)))
+        else SliverPadding(padding: const EdgeInsets.symmetric(horizontal: 20), sliver: SliverList(delegate: SliverChildBuilderDelegate(
+          (_, i) => Padding(padding: const EdgeInsets.only(bottom: 14), child: _contratCard(_filtreContrats[i])), childCount: _filtreContrats.length))),
+        const SliverToBoxAdapter(child: SizedBox(height: 100)),
+      ]));
+  }
+
+  // ── PAGE CLIENTS
+  Widget _buildClientsPage() {
+    return RefreshIndicator(onRefresh: _loadAll, color: _bleu2,
+      child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
+        SliverToBoxAdapter(child: _pageHeader('Portefeuille clients', Icons.people_alt_rounded, _bleu1, _bleu3)),
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        if (_loading) const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
+        else if (_clients.isEmpty) SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun client', 'Vos clients apparaîtront ici.', Icons.people_alt_rounded)))
+        else SliverPadding(padding: const EdgeInsets.symmetric(horizontal: 20), sliver: SliverList(delegate: SliverChildBuilderDelegate(
+          (_, i) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _clientCard(_clients[i])), childCount: _clients.length))),
+        const SliverToBoxAdapter(child: SizedBox(height: 100)),
+      ]));
+  }
+
+  // ── PAGE SINISTRES
+  Widget _buildSinistresPage() {
+    return RefreshIndicator(onRefresh: _loadAll, color: _rouge,
+      child: CustomScrollView(physics: const AlwaysScrollableScrollPhysics(), slivers: [
+        SliverToBoxAdapter(child: Container(width: double.infinity, padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
+          decoration: const BoxDecoration(gradient: LinearGradient(colors: [Color(0xFF7F1D1D), Color(0xFFB91C1C), Color(0xFFEF4444)], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36))),
+          child: Row(children: [Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.car_crash_rounded, color: Colors.white, size: 24)), const SizedBox(width: 14), const Text('Sinistres', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white))]))),
+        const SliverToBoxAdapter(child: SizedBox(height: 20)),
+        if (_loading) const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _rouge))))
+        else if (_sinistres.isEmpty) SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun sinistre', 'Les sinistres apparaîtront ici.', Icons.car_crash_rounded)))
+        else SliverPadding(padding: const EdgeInsets.symmetric(horizontal: 20), sliver: SliverList(delegate: SliverChildBuilderDelegate(
+          (_, i) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _sinistreCard(_sinistres[i])), childCount: _sinistres.length))),
+        const SliverToBoxAdapter(child: SizedBox(height: 100)),
+      ]));
+  }
+
+  // ── PAGE RAPPORTS
+  Widget _buildRapportsPage() {
+    return SingleChildScrollView(padding: const EdgeInsets.fromLTRB(20, 24, 20, 100), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('Résumé mensuel', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _texte)),
+      const SizedBox(height: 14),
+      _rapportCard(Icons.assignment_turned_in_rounded, 'Contrats actifs',   '${_kpis['contrats_actifs']  ?? 0}', _vert),
+      _rapportCard(Icons.access_time_rounded,          'En attente',         '${_kpis['contrats_attente'] ?? 0}', _orange),
+      _rapportCard(Icons.paid_rounded,                 'Primes ce mois',     '${(_kpis['primes_mois']   ?? 0).toStringAsFixed(0)} MRU', _bleu2),
+      _rapportCard(Icons.paid_outlined,                'Total primes',        '${(_kpis['primes_total']  ?? 0).toStringAsFixed(0)} MRU', _bleu1),
+      _rapportCard(Icons.car_crash_rounded,            'Sinistres en cours', '${_kpis['sinistres_cours'] ?? 0}', _rouge),
+      _rapportCard(Icons.people_alt_rounded,           'Clients actifs',     '${_kpis['total_clients']   ?? 0}', const Color(0xFF7C3AED)),
+    ]));
+  }
+
+  // ── PAGE PROFIL
+  Widget _buildProfilPage() {
+    return SingleChildScrollView(physics: const BouncingScrollPhysics(), child: Column(children: [
+      Container(width: double.infinity, padding: const EdgeInsets.fromLTRB(24, 56, 24, 32),
+        decoration: const BoxDecoration(gradient: LinearGradient(colors: [_bleu1, _bleu2, _bleu3], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36))),
+        child: Column(children: [
+          Container(width: 80, height: 80, decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 3)), child: const Icon(Icons.badge_rounded, color: Colors.white, size: 44)),
+          const SizedBox(height: 12),
+          Text('$_agentPrenom $_agentNom', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
+          const SizedBox(height: 4),
+          const Text("Agent d'assurance", style: TextStyle(color: Colors.white70, fontSize: 14)),
+          const SizedBox(height: 4),
+          Text(_agentEmail, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+          const SizedBox(height: 20),
+          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _sProfil('${_kpis['contrats_actifs']  ?? 0}', 'Actifs'),
+            Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 24)),
+            _sProfil('${_kpis['contrats_attente'] ?? 0}', 'Attente'),
+            Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 24)),
+            _sProfil('${_kpis['total_clients']    ?? 0}', 'Clients'),
+          ]),
+        ])),
+      const SizedBox(height: 24),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Column(children: [
+        _profileItem(Icons.person_outline_rounded, 'Nom complet', '$_agentPrenom $_agentNom'),
+        _profileItem(Icons.email_outlined,          'Email',       _agentEmail.isNotEmpty ? _agentEmail : 'Non renseigné'),
+        _profileItem(Icons.work_outline_rounded,    'Rôle',        "Agent d'assurance"),
+        const SizedBox(height: 28),
+        GestureDetector(onTap: _deconnecter, child: Container(width: double.infinity, height: 54,
+          decoration: BoxDecoration(color: _rouge, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: _rouge.withOpacity(0.3), blurRadius: 16, offset: const Offset(0, 6))]),
+          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.logout_rounded, color: Colors.white, size: 20), SizedBox(width: 10), Text('Se déconnecter', style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700))]))),
+      ])),
+      const SizedBox(height: 48),
+    ]));
+  }
+
+  // ── CARDS ─────────────────────────────────────────────────
+
+  Widget _contratCard(Map c) {
+    final statut = c['statut'] ?? '';
+    Color color; String label;
+    switch (statut) {
+      case 'ACTIF':      color = _vert;   label = 'Actif';      break;
+      case 'EN_ATTENTE': color = _orange; label = 'En attente'; break;
+      case 'ANNULE':     color = _rouge;  label = 'Annulé';     break;
+      default:           color = _gris;   label = statut;
+    }
+    return Container(padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: _bleu2.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.assignment_rounded, color: _bleu2, size: 22)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(c['client'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _texte), maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text(c['numero'] ?? '', style: const TextStyle(fontSize: 12, color: _gris)),
+          ])),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)), child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700))),
+        ]),
+        const SizedBox(height: 12),
+        const Divider(height: 1, color: Color(0xFFF0F4FF)),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _infoChip('Véhicule', c['vehicule'] ?? '-')),
+          Expanded(child: _infoChip('Type', c['type'] ?? '-')),
+          Expanded(child: _infoChip('Prime', '${c['prime'] ?? 0} MRU')),
+        ]),
+        if (statut == 'EN_ATTENTE') ...[
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: GestureDetector(onTap: () => _validerContrat(c, 'ACTIF'),
+              child: Container(height: 38, decoration: BoxDecoration(color: _vert, borderRadius: BorderRadius.circular(10)),
+                child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.check_rounded, color: Colors.white, size: 16), SizedBox(width: 6), Text('Valider', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13))])))),
+            const SizedBox(width: 10),
+            Expanded(child: GestureDetector(onTap: () => _validerContrat(c, 'ANNULE'),
+              child: Container(height: 38, decoration: BoxDecoration(border: Border.all(color: _rouge), borderRadius: BorderRadius.circular(10)),
+                child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.close_rounded, color: _rouge, size: 16), SizedBox(width: 6), Text('Refuser', style: TextStyle(color: _rouge, fontWeight: FontWeight.w700, fontSize: 13))])))),
+          ]),
+        ],
+      ]));
+  }
+
+  Widget _clientCard(Map c) {
+    final statut = c['statut'] ?? '';
+    final initials = '${(c['prenom'] ?? '').isNotEmpty ? (c['prenom'] as String)[0] : ''}${(c['nom'] ?? '').isNotEmpty ? (c['nom'] as String)[0] : ''}'.toUpperCase();
+    final Color sc = statut == 'ACTIF' ? _vert : statut == 'SUSPENDU' ? _rouge : _orange;
+    return Container(padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))]),
+      child: Row(children: [
+        CircleAvatar(radius: 24, backgroundColor: _bleu2.withOpacity(0.12), child: Text(initials, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _bleu2))),
+        const SizedBox(width: 14),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('${c['prenom'] ?? ''} ${c['nom'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _texte)),
+          const SizedBox(height: 3),
+          Text(c['telephone'] ?? '', style: const TextStyle(fontSize: 12, color: _gris)),
+          if ((c['email'] ?? '').toString().isNotEmpty)
+            Text(c['email'].toString(), style: const TextStyle(fontSize: 11, color: _gris), maxLines: 1, overflow: TextOverflow.ellipsis),
+        ])),
+        const SizedBox(width: 8),
+        Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: sc.withOpacity(0.1), borderRadius: BorderRadius.circular(20)), child: Text(statut, style: TextStyle(color: sc, fontSize: 10, fontWeight: FontWeight.w700))),
+      ]));
+  }
+
+  Widget _sinistreCard(Map s) {
+    final statut = s['statut'] ?? '';
+    Color color; String label;
+    switch (statut) {
+      case 'DECLARE':   color = _orange; label = 'Déclaré';  break;
+      case 'EN_COURS':  color = _bleu2;  label = 'En cours'; break;
+      case 'EXPERTISE': color = _orange; label = 'Expertise'; break;
+      case 'APPROUVE':  color = _vert;   label = 'Approuvé'; break;
+      case 'CLOTURE':   color = _gris;   label = 'Clôturé';  break;
+      default:          color = _rouge;  label = statut;
+    }
+    return Container(padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 12, offset: const Offset(0, 4))]),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(Icons.car_crash_rounded, color: color, size: 22)),
+          const SizedBox(width: 12),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(s['numero'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: _texte)),
+            Text(s['client'] ?? '', style: const TextStyle(fontSize: 12, color: _gris)),
+          ])),
+          Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(20)), child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700))),
+        ]),
+        const SizedBox(height: 10),
+        Text(s['description'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: _texte)),
+        const SizedBox(height: 8),
+        Row(children: [
+          const Icon(Icons.calendar_today_rounded, color: _gris, size: 13), const SizedBox(width: 4),
+          Text(s['date_accident'] ?? '', style: const TextStyle(fontSize: 11, color: _gris)),
+          if ((s['lieu'] ?? '').toString().isNotEmpty) ...[
+            const SizedBox(width: 12), const Icon(Icons.location_on_rounded, color: _gris, size: 13), const SizedBox(width: 4),
+            Expanded(child: Text(s['lieu'].toString(), style: const TextStyle(fontSize: 11, color: _gris), maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ],
+        ]),
+      ]));
+  }
+
+  Widget _rapportCard(IconData icon, String label, String value, Color color) => Container(
+    margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+    child: Row(children: [Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: color, size: 22)), const SizedBox(width: 14), Expanded(child: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _texte))), Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: color))]));
+
+  // ── UTILITAIRES ───────────────────────────────────────────
+
+  Widget _pageHeader(String titre, IconData icon, Color c1, Color c2) => Container(
+    width: double.infinity, padding: const EdgeInsets.fromLTRB(24, 48, 24, 28),
+    decoration: BoxDecoration(gradient: LinearGradient(colors: [c1, c2], begin: Alignment.topLeft, end: Alignment.bottomRight), borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36))),
+    child: Row(children: [Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: Colors.white, size: 24)), const SizedBox(width: 14), Text(titre, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white))]));
+
+  Widget _quickAction(IconData icon, String label, Color color, {required VoidCallback onTap}) => Expanded(child: GestureDetector(onTap: onTap, child: Container(
+    padding: const EdgeInsets.symmetric(vertical: 16), decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(18), boxShadow: [BoxShadow(color: color.withOpacity(0.1), blurRadius: 12, offset: const Offset(0, 4))]),
+    child: Column(children: [Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: color, size: 22)), const SizedBox(height: 8), Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: _texte), textAlign: TextAlign.center)]))));
+
+  Widget _hStat(String v, String l) => Column(children: [Text(v, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: Colors.white)), const SizedBox(height: 2), Text(l, style: const TextStyle(fontSize: 10, color: Colors.white70))]);
+  Widget _divStat() => Container(width: 1, height: 30, color: Colors.white30, margin: const EdgeInsets.symmetric(horizontal: 4));
+  Widget _sProfil(String v, String l) => Column(children: [Text(v, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Colors.white)), const SizedBox(height: 2), Text(l, style: const TextStyle(fontSize: 11, color: Colors.white70))]);
+
+  Widget _infoChip(String label, String value) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Text(label, style: const TextStyle(fontSize: 11, color: _gris, fontWeight: FontWeight.w500)),
+    const SizedBox(height: 3),
+    Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _texte), maxLines: 1, overflow: TextOverflow.ellipsis)]);
+
+  Widget _profileItem(IconData icon, String label, String value) => Container(margin: const EdgeInsets.only(bottom: 10), padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(14), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+    child: Row(children: [Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(10)), child: Icon(icon, color: _bleu2, size: 20)), const SizedBox(width: 14), Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(label, style: const TextStyle(fontSize: 11, color: _gris, fontWeight: FontWeight.w500)), const SizedBox(height: 3), Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _texte))]))]));
+
+  Widget _emptyCard(String titre, String sous, IconData icon) => Container(width: double.infinity, padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+    decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(18), border: Border.all(color: const Color(0xFFE5E7EB))),
+    child: Column(children: [Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: _bleu2.withOpacity(0.06), shape: BoxShape.circle), child: Icon(icon, color: const Color(0xFFADBDD8), size: 32)), const SizedBox(height: 12), Text(titre, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Color(0xFF374151))), const SizedBox(height: 4), Text(sous, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: _gris))]));
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = [_buildAccueil(), _buildSouscriptionsPage(), _buildClientsPage(), _buildSinistresPage(), _buildRapportsPage(), _buildProfilPage()];
+    return Scaffold(
+      backgroundColor: _fond,
+      body: SafeArea(child: pages[_currentIndex]),
+      bottomNavigationBar: Container(
+        decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, -4))], borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24))),
+        child: ClipRRect(borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24)),
+          child: BottomNavigationBar(currentIndex: _currentIndex, onTap: (i) => setState(() => _currentIndex = i), type: BottomNavigationBarType.fixed, backgroundColor: Colors.white, selectedItemColor: _bleu2, unselectedItemColor: const Color(0xFFADBDD8), selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 10), unselectedLabelStyle: const TextStyle(fontSize: 10), elevation: 0,
+            items: const [
+              BottomNavigationBarItem(icon: Icon(Icons.home_outlined),          activeIcon: Icon(Icons.home_rounded),          label: 'Accueil'),
+              BottomNavigationBarItem(icon: Icon(Icons.assignment_outlined),    activeIcon: Icon(Icons.assignment_rounded),    label: 'Dossiers'),
+              BottomNavigationBarItem(icon: Icon(Icons.people_alt_outlined),    activeIcon: Icon(Icons.people_alt_rounded),    label: 'Clients'),
+              BottomNavigationBarItem(icon: Icon(Icons.car_crash_outlined),     activeIcon: Icon(Icons.car_crash_rounded),     label: 'Sinistres'),
+              BottomNavigationBarItem(icon: Icon(Icons.bar_chart_outlined),     activeIcon: Icon(Icons.bar_chart_rounded),     label: 'Rapports'),
+              BottomNavigationBarItem(icon: Icon(Icons.person_outline_rounded), activeIcon: Icon(Icons.person_rounded),        label: 'Profil'),
+            ])),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// AVATAR WEB
+// ════════════════════════════════════════════════════════════
+class _WebAvatar extends StatelessWidget {
+  final String nom, prenom; final double size;
+  const _WebAvatar({required this.nom, required this.prenom, this.size = 38});
+  @override
+  Widget build(BuildContext context) {
+    final i = '${prenom.isNotEmpty ? prenom[0] : ''}${nom.isNotEmpty ? nom[0] : ''}'.toUpperCase();
+    return Container(width: size, height: size, decoration: const BoxDecoration(color: _kPrimary, shape: BoxShape.circle), child: Center(child: Text(i.isEmpty ? 'A' : i, style: TextStyle(color: _kWhite, fontSize: size * 0.36, fontWeight: FontWeight.w700))));
+  }
+}
+
+class _NavItem { final AgentSection section; final IconData icon; final String label; const _NavItem(this.section, this.icon, this.label); }
+
+// ════════════════════════════════════════════════════════════
+// PANELS WEB
+// ════════════════════════════════════════════════════════════
+
+class AgentHomePanel extends StatefulWidget { final AgentService agentService; const AgentHomePanel({super.key, required this.agentService}); @override State<AgentHomePanel> createState() => _AgentHomePanelState(); }
+class _AgentHomePanelState extends State<AgentHomePanel> {
+  bool _loading = true; Map<String, dynamic> _kpis = {}; List _derniers = []; String? _error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try { final res = await widget.agentService.getDashboard(); if (res['success'] == true) setState(() { _kpis = res['kpis'] ?? {}; _derniers = res['derniers_contrats'] ?? []; }); else setState(() => _error = res['message'] ?? 'Erreur'); } catch (_) { setState(() => _error = 'Serveur inaccessible.'); } finally { if (mounted) setState(() => _loading = false); }
+  }
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator(color: _kPrimary));
+    if (_error != null) return _ErrorWidget(message: _error!, onRetry: _load);
+    return SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      GridView.count(crossAxisCount: 4, mainAxisSpacing: 16, crossAxisSpacing: 16, childAspectRatio: 1.8, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), children: [
+        _MetricCard(label: 'Souscriptions en attente', value: '${_kpis['contrats_attente'] ?? 0}', icon: Icons.assignment_rounded, iconColor: _kPrimary, bgColor: const Color(0xFFEEF3FF), trend: '${_kpis['contrats_mois'] ?? 0} ce mois', trendUp: true),
+        _MetricCard(label: 'Clients actifs', value: '${_kpis['total_clients'] ?? 0}', icon: Icons.people_alt_rounded, iconColor: const Color(0xFF0BA5B8), bgColor: const Color(0xFFE6F9FB), trend: 'Actifs: ${_kpis['contrats_actifs'] ?? 0}', trendUp: true),
+        _MetricCard(label: 'Sinistres en cours', value: '${_kpis['sinistres_cours'] ?? 0}', icon: Icons.car_crash_rounded, iconColor: const Color(0xFFE68619), bgColor: const Color(0xFFFFF4E6), trend: '${_kpis['contrats_expires'] ?? 0} expirés', trendUp: false),
+        _MetricCard(label: 'Primes ce mois', value: '${(_kpis['primes_mois'] ?? 0).toStringAsFixed(0)} MRU', icon: Icons.account_balance_wallet_rounded, iconColor: const Color(0xFF2DA44E), bgColor: const Color(0xFFEAF7EE), trend: 'Total: ${(_kpis['primes_total'] ?? 0).toStringAsFixed(0)} MRU', trendUp: true),
+      ]),
+      const SizedBox(height: 24),
+      Row(children: [const _SectionTitle('Dernières souscriptions'), const Spacer(), TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 16, color: _kPrimary), label: const Text('Actualiser', style: TextStyle(color: _kPrimary, fontSize: 13)))]),
+      const SizedBox(height: 12),
+      _RealTable(rows: _derniers),
+    ]));
+  }
+}
+
+class _RealTable extends StatelessWidget {
+  final List rows; const _RealTable({required this.rows});
+  @override
+  Widget build(BuildContext context) {
+    if (rows.isEmpty) return Container(padding: const EdgeInsets.all(32), decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: const Center(child: Text('Aucune souscription récente.', style: TextStyle(color: _kTextSecond))));
+    return Container(decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: Column(children: [
+      Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))),
+        child: const Row(children: [Expanded(flex: 3, child: _ThLabel('Client')), Expanded(flex: 2, child: _ThLabel('N° Contrat')), Expanded(flex: 2, child: _ThLabel('Type')), Expanded(flex: 2, child: _ThLabel('Prime (MRU)')), Expanded(flex: 2, child: _ThLabel('Statut'))])),
+      ...rows.asMap().entries.map((e) { final row = e.value as Map; return Container(decoration: BoxDecoration(border: e.key < rows.length-1 ? Border(bottom: BorderSide(color: _kBorder)) : null), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(children: [Expanded(flex: 3, child: Text(row['client'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _kTextPrimary))), Expanded(flex: 2, child: Text(row['numero'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))), Expanded(flex: 2, child: Text(row['type'] ?? '', style: const TextStyle(fontSize: 13, color: _kTextSecond))), Expanded(flex: 2, child: Text('${row['prime'] ?? 0}', style: const TextStyle(fontSize: 13, color: _kTextPrimary))), Expanded(flex: 2, child: _StatusBadge(row['statut'] ?? ''))])); }),
+    ]));
+  }
+}
+
+class AgentSouscriptionsPanel extends StatefulWidget { final AgentService agentService; const AgentSouscriptionsPanel({super.key, required this.agentService}); @override State<AgentSouscriptionsPanel> createState() => _AgentSouscriptionsPanelState(); }
+class _AgentSouscriptionsPanelState extends State<AgentSouscriptionsPanel> {
+  bool _loading = true; List _contrats = []; String _filtreStatut = 'EN_ATTENTE'; String _search = ''; String? _error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { setState(() { _loading = true; _error = null; }); try { final res = await widget.agentService.getContrats(statut: _filtreStatut, search: _search); if (res['success'] == true) setState(() => _contrats = res['contrats'] ?? []); else setState(() => _error = res['message'] ?? 'Erreur'); } catch (_) { setState(() => _error = 'Erreur.'); } finally { if (mounted) setState(() => _loading = false); } }
+  Future<void> _valider(Map c, String s) async { final res = await widget.agentService.updateContratStatut(c['id'], s); if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['success'] == true ? 'Contrat $s' : res['message'] ?? 'Erreur'), backgroundColor: res['success'] == true ? Colors.green : Colors.red)); if (res['success'] == true) _load(); }
+  @override
+  Widget build(BuildContext context) => Padding(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    Row(children: [Expanded(child: Container(height: 40, decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(10), border: Border.all(color: _kBorder)), child: TextField(style: const TextStyle(fontSize: 13), decoration: const InputDecoration(hintText: 'Rechercher...', hintStyle: TextStyle(fontSize: 13, color: _kTextSecond), prefixIcon: Icon(Icons.search_rounded, size: 18, color: _kTextSecond), border: InputBorder.none, contentPadding: EdgeInsets.symmetric(vertical: 10)), onChanged: (v) { _search = v; _load(); }))), const SizedBox(width: 12),
+      ...[['En attente','EN_ATTENTE'],['Actif','ACTIF'],['Tous','TOUS']].map((f) => Padding(padding: const EdgeInsets.only(left: 8), child: _FilterChip(label: f[0], value: f[1], current: _filtreStatut, onTap: (v) { setState(() => _filtreStatut = v); _load(); })))]),
+    const SizedBox(height: 16),
+    Expanded(child: _loading ? const Center(child: CircularProgressIndicator(color: _kPrimary)) : _error != null ? _ErrorWidget(message: _error!, onRetry: _load) : _contrats.isEmpty ? const _EmptyWidget(label: 'Aucun contrat.') : _ContratsTable(contrats: _contrats, onValider: _valider)),
+  ]));
+}
+
+class _ContratsTable extends StatelessWidget {
+  final List contrats; final Function(Map, String) onValider;
+  const _ContratsTable({required this.contrats, required this.onValider});
+  @override
+  Widget build(BuildContext context) => Container(decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: Column(children: [
+    Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))),
+      child: const Row(children: [Expanded(flex: 3, child: _ThLabel('Client')), Expanded(flex: 2, child: _ThLabel('N° Contrat')), Expanded(flex: 2, child: _ThLabel('Véhicule')), Expanded(flex: 1, child: _ThLabel('Type')), Expanded(flex: 2, child: _ThLabel('Prime')), Expanded(flex: 2, child: _ThLabel('Statut')), Expanded(flex: 3, child: _ThLabel('Actions'))])),
+    Expanded(child: ListView.separated(itemCount: contrats.length, separatorBuilder: (_, __) => Divider(height: 1, color: _kBorder), itemBuilder: (_, i) { final c = contrats[i] as Map; return Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10), child: Row(children: [
+      Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(c['client'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _kTextPrimary)), Text(c['telephone'] ?? '', style: const TextStyle(fontSize: 11, color: _kTextSecond))])),
+      Expanded(flex: 2, child: Text(c['numero'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 2, child: Text('${c['vehicule'] ?? ''}\n${c['immat'] ?? ''}', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 1, child: Text(c['type'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 2, child: Text('${c['prime'] ?? 0} MRU', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _kTextPrimary))),
+      Expanded(flex: 2, child: _StatusBadge(c['statut'] ?? '')),
+      Expanded(flex: 3, child: Row(children: c['statut'] == 'EN_ATTENTE' ? [_ActionBtn(label: 'Valider', color: Colors.green, onTap: () => onValider(c, 'ACTIF')), const SizedBox(width: 6), _ActionBtn(label: 'Refuser', color: Colors.red, onTap: () => onValider(c, 'ANNULE'))] : [_ActionBtn(label: 'Voir', color: _kPrimary, onTap: () {})])),
+    ])); })),
+  ]));
+}
+
+class AgentPortefeuillePanel extends StatefulWidget { final AgentService agentService; const AgentPortefeuillePanel({super.key, required this.agentService}); @override State<AgentPortefeuillePanel> createState() => _AgentPortefeuillePanelState(); }
+class _AgentPortefeuillePanelState extends State<AgentPortefeuillePanel> {
+  bool _loading = true; List _clients = []; String _search = ''; String? _error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { setState(() { _loading = true; _error = null; }); try { final res = await widget.agentService.getClients(search: _search); if (res['success'] == true) setState(() => _clients = res['utilisateurs'] ?? []); else setState(() => _error = res['message'] ?? 'Erreur'); } catch (_) { setState(() => _error = 'Erreur.'); } finally { if (mounted) setState(() => _loading = false); } }
+  @override
+  Widget build(BuildContext context) => Padding(padding: const EdgeInsets.all(24), child: Column(children: [
+    Container(height: 40, decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(10), border: Border.all(color: _kBorder)), child: TextField(style: const TextStyle(fontSize: 13), decoration: const InputDecoration(hintText: 'Rechercher un client...', hintStyle: TextStyle(fontSize: 13, color: _kTextSecond), prefixIcon: Icon(Icons.search_rounded, size: 18, color: _kTextSecond), border: InputBorder.none, contentPadding: EdgeInsets.symmetric(vertical: 10)), onChanged: (v) { _search = v; _load(); })),
+    const SizedBox(height: 16),
+    Expanded(child: _loading ? const Center(child: CircularProgressIndicator(color: _kPrimary)) : _error != null ? _ErrorWidget(message: _error!, onRetry: _load) : _clients.isEmpty ? const _EmptyWidget(label: 'Aucun client.') : _ClientsTable(clients: _clients)),
+  ]));
+}
+
+class _ClientsTable extends StatelessWidget {
+  final List clients; const _ClientsTable({required this.clients});
+  @override
+  Widget build(BuildContext context) => Container(decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: Column(children: [
+    Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))),
+      child: const Row(children: [Expanded(flex: 3, child: _ThLabel('Client')), Expanded(flex: 2, child: _ThLabel('Téléphone')), Expanded(flex: 3, child: _ThLabel('Email')), Expanded(flex: 2, child: _ThLabel('NNI')), Expanded(flex: 1, child: _ThLabel('Statut'))])),
+    Expanded(child: ListView.separated(itemCount: clients.length, separatorBuilder: (_, __) => Divider(height: 1, color: _kBorder), itemBuilder: (_, i) { final c = clients[i] as Map; final initials = '${(c['prenom'] ?? '').isNotEmpty ? (c['prenom'] as String)[0] : ''}${(c['nom'] ?? '').isNotEmpty ? (c['nom'] as String)[0] : ''}'.toUpperCase(); return Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10), child: Row(children: [
+      Expanded(flex: 3, child: Row(children: [CircleAvatar(radius: 16, backgroundColor: _kPrimary.withOpacity(0.15), child: Text(initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _kPrimary))), const SizedBox(width: 10), Expanded(child: Text('${c['prenom'] ?? ''} ${c['nom'] ?? ''}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _kTextPrimary), overflow: TextOverflow.ellipsis))])),
+      Expanded(flex: 2, child: Text(c['telephone'] ?? '', style: const TextStyle(fontSize: 13, color: _kTextSecond))),
+      Expanded(flex: 3, child: Text(c['email'] ?? '-', style: const TextStyle(fontSize: 13, color: _kTextSecond), overflow: TextOverflow.ellipsis)),
+      Expanded(flex: 2, child: Text(c['nni'] ?? '-', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 1, child: _StatusBadge(c['statut'] ?? '')),
+    ])); })),
+  ]));
+}
+
+class AgentSinistresPanel extends StatefulWidget { final AgentService agentService; const AgentSinistresPanel({super.key, required this.agentService}); @override State<AgentSinistresPanel> createState() => _AgentSinistresPanelState(); }
+class _AgentSinistresPanelState extends State<AgentSinistresPanel> {
+  bool _loading = true; List _sinistres = []; String _filtreStatut = 'TOUS'; String? _error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { setState(() { _loading = true; _error = null; }); try { final res = await widget.agentService.getSinistres(statut: _filtreStatut); if (res['success'] == true) setState(() => _sinistres = res['sinistres'] ?? []); else setState(() => _error = res['message'] ?? 'Erreur'); } catch (_) { setState(() => _error = 'Erreur.'); } finally { if (mounted) setState(() => _loading = false); } }
+  Future<void> _changerStatut(Map s, String statut) async { final res = await widget.agentService.updateSinistreStatut(s['id'], statut); if (!mounted) return; ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(res['success'] == true ? 'Sinistre mis à jour' : res['message'] ?? 'Erreur'), backgroundColor: res['success'] == true ? Colors.green : Colors.red)); if (res['success'] == true) _load(); }
+  @override
+  Widget build(BuildContext context) { final statuts = ['TOUS','DECLARE','EN_COURS','EXPERTISE','APPROUVE','CLOTURE']; return Padding(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: statuts.map((s) => Padding(padding: const EdgeInsets.only(right: 8), child: _FilterChip(label: s, value: s, current: _filtreStatut, onTap: (v) { setState(() => _filtreStatut = v); _load(); }))).toList())),
+    const SizedBox(height: 16),
+    Expanded(child: _loading ? const Center(child: CircularProgressIndicator(color: _kPrimary)) : _error != null ? _ErrorWidget(message: _error!, onRetry: _load) : _sinistres.isEmpty ? const _EmptyWidget(label: 'Aucun sinistre.') : _SinistresTable(sinistres: _sinistres, onChangerStatut: _changerStatut)),
+  ])); }
+}
+
+class _SinistresTable extends StatelessWidget {
+  final List sinistres; final Function(Map, String) onChangerStatut;
+  const _SinistresTable({required this.sinistres, required this.onChangerStatut});
+  @override
+  Widget build(BuildContext context) => Container(decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: Column(children: [
+    Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))),
+      child: const Row(children: [Expanded(flex: 2, child: _ThLabel('N° Sinistre')), Expanded(flex: 3, child: _ThLabel('Client')), Expanded(flex: 2, child: _ThLabel('Contrat')), Expanded(flex: 2, child: _ThLabel('Date')), Expanded(flex: 2, child: _ThLabel('Statut')), Expanded(flex: 2, child: _ThLabel('Action'))])),
+    Expanded(child: ListView.separated(itemCount: sinistres.length, separatorBuilder: (_, __) => Divider(height: 1, color: _kBorder), itemBuilder: (_, i) { final s = sinistres[i] as Map; return Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10), child: Row(children: [
+      Expanded(flex: 2, child: Text(s['numero'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 3, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(s['client'] ?? '', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _kTextPrimary)), Text(s['telephone'] ?? '', style: const TextStyle(fontSize: 11, color: _kTextSecond))])),
+      Expanded(flex: 2, child: Text(s['contrat'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 2, child: Text(s['date_accident'] ?? '', style: const TextStyle(fontSize: 12, color: _kTextSecond))),
+      Expanded(flex: 2, child: _StatusBadge(s['statut'] ?? '')),
+      Expanded(flex: 2, child: _StatutDropdown(current: s['statut'] ?? '', onChanged: (v) => onChangerStatut(s, v))),
+    ])); })),
+  ]));
+}
+
+class _StatutDropdown extends StatelessWidget {
+  final String current; final Function(String) onChanged;
+  const _StatutDropdown({required this.current, required this.onChanged});
+  @override
+  Widget build(BuildContext context) { final statuts = ['DECLARE','EN_COURS','EXPERTISE','APPROUVE','REJETE','CLOTURE','INDEMNISE']; return Container(height: 32, padding: const EdgeInsets.symmetric(horizontal: 8), decoration: BoxDecoration(border: Border.all(color: _kBorder), borderRadius: BorderRadius.circular(8)), child: DropdownButtonHideUnderline(child: DropdownButton<String>(value: statuts.contains(current) ? current : statuts.first, style: const TextStyle(fontSize: 11, color: _kTextPrimary), isDense: true, items: statuts.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(), onChanged: (v) { if (v != null && v != current) onChanged(v); }))); }
+}
+
+class AgentMessageriePanel extends StatefulWidget { final AgentService agentService; const AgentMessageriePanel({super.key, required this.agentService}); @override State<AgentMessageriePanel> createState() => _AgentMessageriePanelState(); }
+class _AgentMessageriePanelState extends State<AgentMessageriePanel> {
+  bool _loading = true; List _clients = []; Map? _selectedClient; List _messages = []; bool _loadingMessages = false;
+  final _msgCtrl = TextEditingController();
+  @override void initState() { super.initState(); _loadClients(); }
+  @override void dispose() { _msgCtrl.dispose(); super.dispose(); }
+  Future<void> _loadClients() async { setState(() => _loading = true); try { final res = await widget.agentService.getClients(); if (res['success'] == true) setState(() => _clients = res['utilisateurs'] ?? []); } catch (_) {} finally { if (mounted) setState(() => _loading = false); } }
+  Future<void> _loadMessages(Map client) async { setState(() { _selectedClient = client; _loadingMessages = true; _messages = []; }); try { final res = await widget.agentService.getMessagesClient(client['id']); if (res['success'] == true) setState(() => _messages = res['messages'] ?? []); } catch (_) {} finally { if (mounted) setState(() => _loadingMessages = false); } }
+  Future<void> _envoyer() async { if (_selectedClient == null || _msgCtrl.text.trim().isEmpty) return; final msg = _msgCtrl.text.trim(); _msgCtrl.clear(); final res = await widget.agentService.envoyerMessage(clientId: _selectedClient!['id'], message: msg); if (res['success'] == true) _loadMessages(_selectedClient!); }
+  @override
+  Widget build(BuildContext context) => Padding(padding: const EdgeInsets.all(24), child: Row(children: [
+    Container(width: 240, decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)), child: Column(children: [
+      Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))), child: const Text('Clients', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _kTextPrimary))),
+      Expanded(child: _loading ? const Center(child: CircularProgressIndicator(color: _kPrimary)) : ListView.builder(itemCount: _clients.length, itemBuilder: (_, i) { final c = _clients[i] as Map; final sel = _selectedClient?['id'] == c['id']; return ListTile(selected: sel, selectedTileColor: _kPrimary.withOpacity(0.08), leading: CircleAvatar(radius: 16, backgroundColor: _kPrimary.withOpacity(0.15), child: Text('${(c['prenom'] ?? '').isNotEmpty ? (c['prenom'] as String)[0] : ''}${(c['nom'] ?? '').isNotEmpty ? (c['nom'] as String)[0] : ''}'.toUpperCase(), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _kPrimary))), title: Text('${c['prenom'] ?? ''} ${c['nom'] ?? ''}', style: const TextStyle(fontSize: 13)), subtitle: Text(c['telephone'] ?? '', style: const TextStyle(fontSize: 11)), onTap: () => _loadMessages(c)); })),
+    ])),
+    const SizedBox(width: 16),
+    Expanded(child: Container(decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)),
+      child: _selectedClient == null
+        ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.chat_bubble_outline_rounded, size: 48, color: _kBorder), SizedBox(height: 12), Text('Sélectionnez un client', style: TextStyle(color: _kTextSecond))]))
+        : Column(children: [
+            Container(padding: const EdgeInsets.all(14), decoration: BoxDecoration(color: _kBg, borderRadius: const BorderRadius.vertical(top: Radius.circular(14)), border: Border(bottom: BorderSide(color: _kBorder))), child: Row(children: [const Icon(Icons.person_rounded, color: _kPrimary, size: 18), const SizedBox(width: 8), Text('${_selectedClient!['prenom']} ${_selectedClient!['nom']}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _kTextPrimary))])),
+            Expanded(child: _loadingMessages ? const Center(child: CircularProgressIndicator(color: _kPrimary)) : _messages.isEmpty ? const Center(child: Text('Aucun message.', style: TextStyle(color: _kTextSecond)))
+              : ListView.builder(padding: const EdgeInsets.all(16), itemCount: _messages.length, itemBuilder: (_, i) { final m = _messages[i] as Map; return Container(margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: _kBg, borderRadius: BorderRadius.circular(10), border: Border.all(color: _kBorder)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(m['titre'] ?? '', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kPrimary)), const SizedBox(height: 4), Text(m['message'] ?? '', style: const TextStyle(fontSize: 13, color: _kTextPrimary)), const SizedBox(height: 4), Text(m['date_envoi'] ?? '', style: const TextStyle(fontSize: 11, color: _kTextSecond))])); })),
+            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(border: Border(top: BorderSide(color: _kBorder))), child: Row(children: [
+              Expanded(child: TextField(controller: _msgCtrl, style: const TextStyle(fontSize: 13), decoration: InputDecoration(hintText: 'Écrire un message...', hintStyle: const TextStyle(color: _kTextSecond, fontSize: 13), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _kBorder)), enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: _kBorder)), contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)), onSubmitted: (_) => _envoyer())),
+              const SizedBox(width: 8),
+              ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: _kPrimary, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)), padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)), onPressed: _envoyer, child: const Icon(Icons.send_rounded, color: _kWhite, size: 18)),
+            ])),
+          ]))),
+  ]));
+}
+
+class AgentRapportsPanel extends StatefulWidget { final AgentService agentService; const AgentRapportsPanel({super.key, required this.agentService}); @override State<AgentRapportsPanel> createState() => _AgentRapportsPanelState(); }
+class _AgentRapportsPanelState extends State<AgentRapportsPanel> {
+  bool _loading = true; Map<String, dynamic> _kpis = {}; List _statsMois = []; String? _error;
+  @override void initState() { super.initState(); _load(); }
+  Future<void> _load() async { setState(() { _loading = true; _error = null; }); try { final r1 = await widget.agentService.getDashboard(); final r2 = await widget.agentService.getStatsMois(); if (r1['success'] == true) setState(() => _kpis = r1['kpis'] ?? {}); if (r2['success'] == true) setState(() => _statsMois = r2['stats'] ?? []); } catch (_) { setState(() => _error = 'Erreur.'); } finally { if (mounted) setState(() => _loading = false); } }
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator(color: _kPrimary));
+    if (_error != null) return _ErrorWidget(message: _error!, onRetry: _load);
+    return SingleChildScrollView(padding: const EdgeInsets.all(24), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const _SectionTitle('Résumé mensuel'), const SizedBox(height: 16),
+      GridView.count(crossAxisCount: 3, mainAxisSpacing: 16, crossAxisSpacing: 16, childAspectRatio: 2.2, shrinkWrap: true, physics: const NeverScrollableScrollPhysics(), children: [
+        _MetricCard(label: 'Contrats actifs',    value: '${_kpis['contrats_actifs'] ?? 0}',                      icon: Icons.assignment_turned_in_rounded, iconColor: Colors.green, bgColor: const Color(0xFFEAF7EE), trend: '', trendUp: true),
+        _MetricCard(label: 'Primes ce mois',     value: '${(_kpis['primes_mois'] ?? 0).toStringAsFixed(0)} MRU', icon: Icons.paid_rounded,                iconColor: _kPrimary,    bgColor: const Color(0xFFEEF3FF), trend: '', trendUp: true),
+        _MetricCard(label: 'Sinistres en cours', value: '${_kpis['sinistres_cours'] ?? 0}',                      icon: Icons.car_crash_rounded,           iconColor: Colors.orange, bgColor: const Color(0xFFFFF4E6), trend: '', trendUp: false),
+      ]),
+      const SizedBox(height: 24),
+      const _SectionTitle('Évolution des contrats (6 derniers mois)'), const SizedBox(height: 12),
+      Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder)),
+        child: _statsMois.isEmpty ? const Center(child: Text('Aucune donnée.', style: TextStyle(color: _kTextSecond)))
+          : Column(children: _statsMois.map<Widget>((s) { final mois = s['mois'] ?? ''; final total = s['total'] ?? 0; final mx = _statsMois.map((x) => x['total'] as int).reduce((a, b) => a > b ? a : b); return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Row(children: [SizedBox(width: 60, child: Text(mois, style: const TextStyle(fontSize: 12, color: _kTextSecond))), Expanded(child: ClipRRect(borderRadius: BorderRadius.circular(4), child: LinearProgressIndicator(value: mx > 0 ? total / mx : 0.0, minHeight: 16, backgroundColor: _kBg, valueColor: const AlwaysStoppedAnimation<Color>(_kPrimary)))), const SizedBox(width: 12), Text('$total', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _kTextPrimary))])); }).toList())),
+    ]));
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// WIDGETS COMMUNS
+// ════════════════════════════════════════════════════════════
+class _MetricCard extends StatelessWidget {
+  final String label, value, trend; final IconData icon; final Color iconColor, bgColor; final bool trendUp;
+  const _MetricCard({required this.label, required this.value, required this.icon, required this.iconColor, required this.bgColor, required this.trend, required this.trendUp});
+  @override
+  Widget build(BuildContext context) => Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: _kWhite, borderRadius: BorderRadius.circular(14), border: Border.all(color: _kBorder), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))]),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Row(children: [Container(width: 38, height: 38, decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(10)), child: Icon(icon, color: iconColor, size: 20)), const Spacer(),
+        if (trend.isNotEmpty) Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3), decoration: BoxDecoration(color: trendUp ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1), borderRadius: BorderRadius.circular(20)), child: Text(trend, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: trendUp ? Colors.green : Colors.orange), overflow: TextOverflow.ellipsis))]),
+      const SizedBox(height: 8),
+      Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _kTextPrimary)),
+      Text(label, style: const TextStyle(fontSize: 12, color: _kTextSecond), maxLines: 1, overflow: TextOverflow.ellipsis),
+    ]));
+}
+class _SectionTitle extends StatelessWidget { final String title; const _SectionTitle(this.title); @override Widget build(BuildContext context) => Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kTextPrimary)); }
+class _ThLabel extends StatelessWidget { final String text; const _ThLabel(this.text); @override Widget build(BuildContext context) => Text(text, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _kTextSecond, letterSpacing: 0.3)); }
+class _StatusBadge extends StatelessWidget {
+  final String status; const _StatusBadge(this.status);
+  @override
+  Widget build(BuildContext context) {
+    Color bg, fg;
+    switch (status) {
+      case 'ACTIF': case 'VALIDE': case 'APPROUVE': case 'CONFIRME': bg = const Color(0xFFEAF7EE); fg = const Color(0xFF2DA44E); break;
+      case 'EN_ATTENTE': case 'DECLARE': bg = const Color(0xFFFFF4E6); fg = const Color(0xFFE68619); break;
+      case 'EN_COURS': case 'EXPERTISE': bg = const Color(0xFFEEF3FF); fg = _kPrimary; break;
+      case 'ANNULE': case 'REJETE': case 'SUSPENDU': bg = const Color(0xFFFFECEC); fg = Colors.red; break;
+      default: bg = const Color(0xFFF1F0EF); fg = _kTextSecond;
+    }
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)), child: Text(status, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: fg), overflow: TextOverflow.ellipsis));
+  }
+}
+class _FilterChip extends StatelessWidget {
+  final String label, value, current; final Function(String) onTap;
+  const _FilterChip({required this.label, required this.value, required this.current, required this.onTap});
+  @override Widget build(BuildContext context) { final active = current == value; return GestureDetector(onTap: () => onTap(value), child: AnimatedContainer(duration: const Duration(milliseconds: 150), padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), decoration: BoxDecoration(color: active ? _kPrimary : _kWhite, borderRadius: BorderRadius.circular(20), border: Border.all(color: active ? _kPrimary : _kBorder)), child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: active ? _kWhite : _kTextSecond)))); }
+}
+class _ActionBtn extends StatelessWidget {
+  final String label; final Color color; final VoidCallback onTap;
+  const _ActionBtn({required this.label, required this.color, required this.onTap});
+  @override Widget build(BuildContext context) => GestureDetector(onTap: onTap, child: Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withOpacity(0.3))), child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: color))));
+}
+class _ErrorWidget extends StatelessWidget {
+  final String message; final VoidCallback onRetry;
+  const _ErrorWidget({required this.message, required this.onRetry});
+  @override Widget build(BuildContext context) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.wifi_off_rounded, size: 48, color: _kTextSecond), const SizedBox(height: 12), Text(message, style: const TextStyle(color: _kTextSecond)), const SizedBox(height: 16), ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: _kPrimary), onPressed: onRetry, icon: const Icon(Icons.refresh_rounded, color: _kWhite, size: 16), label: const Text('Réessayer', style: TextStyle(color: _kWhite)))]));
+}
+class _EmptyWidget extends StatelessWidget {
+  final String label; const _EmptyWidget({required this.label});
+  @override Widget build(BuildContext context) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.inbox_rounded, size: 48, color: _kBorder), const SizedBox(height: 12), Text(label, style: const TextStyle(color: _kTextSecond))]));
+}

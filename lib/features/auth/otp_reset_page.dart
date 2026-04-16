@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../../core/api_client.dart';
 import 'nouveau_pin_page.dart';
 
@@ -60,7 +61,10 @@ class _OtpResetPageState extends State<OtpResetPage> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => NouveauPinPage(resetToken: res['reset_token']),
+            builder: (_) => NouveauPinPage(
+              resetToken: res['reset_token'],
+              isWeb: kIsWeb, // ✅ passer la plateforme
+            ),
           ),
         );
       } else {
@@ -88,7 +92,9 @@ class _OtpResetPageState extends State<OtpResetPage> {
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(nouveauOtp != null ? 'Nouveau code : $nouveauOtp' : 'Nouveau code envoyé !'),
+          content: Text(nouveauOtp != null
+              ? 'Nouveau code : $nouveauOtp'
+              : 'Nouveau code envoyé !'),
           backgroundColor: Colors.green,
         ),
       );
@@ -129,25 +135,40 @@ class _OtpResetPageState extends State<OtpResetPage> {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
-                        boxShadow: [BoxShadow(color: const Color(0xFF1A56DB).withOpacity(0.13), blurRadius: 20, offset: const Offset(0, 6))],
+                        boxShadow: [BoxShadow(
+                            color: const Color(0xFF1A56DB).withOpacity(0.13),
+                            blurRadius: 20,
+                            offset: const Offset(0, 6))],
                       ),
-                      child: const Center(child: Icon(Icons.sms_outlined, color: Color(0xFF1A56DB), size: 34)),
+                      child: const Center(
+                          child: Icon(Icons.sms_outlined,
+                              color: Color(0xFF1A56DB), size: 34)),
                     ),
                     const SizedBox(height: 20),
-                    const Text('Vérification', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF1535A8))),
+                    const Text('Vérification',
+                        style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF1535A8))),
                     const SizedBox(height: 8),
                     Text(
-                      'Code envoyé au\n${widget.telephone}',
+                      kIsWeb
+                          ? 'Code envoyé à\n${widget.telephone}'
+                          : 'Code envoyé au\n${widget.telephone}',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 14, color: Color(0xFF8492A6), height: 1.5),
+                      style: const TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF8492A6),
+                          height: 1.5),
                     ),
 
-                    // BANDEAU DEV
+                    // ── BANDEAU DEV
                     if (widget.otpDebug != null) ...[
                       const SizedBox(height: 14),
                       Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
                         decoration: BoxDecoration(
                           color: const Color(0xFFFFF8E1),
                           borderRadius: BorderRadius.circular(10),
@@ -156,10 +177,14 @@ class _OtpResetPageState extends State<OtpResetPage> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.bug_report, color: Colors.orange, size: 18),
+                            const Icon(Icons.bug_report,
+                                color: Colors.orange, size: 18),
                             const SizedBox(width: 8),
                             Text('DEV — Code : ${widget.otpDebug}',
-                                style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w700, fontSize: 14)),
+                                style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 14)),
                           ],
                         ),
                       ),
@@ -167,21 +192,27 @@ class _OtpResetPageState extends State<OtpResetPage> {
 
                     const Spacer(flex: 2),
 
-                    // 6 CASES OTP
+                    // ── 6 CASES OTP
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: List.generate(6, (index) {
-                        final filled = _otpControllers[index].text.isNotEmpty;
+                        final filled =
+                            _otpControllers[index].text.isNotEmpty;
                         return Container(
                           width: 46, height: 56,
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: filled ? const Color(0xFF1A56DB) : const Color(0xFFD0DCF0),
+                              color: filled
+                                  ? const Color(0xFF1A56DB)
+                                  : const Color(0xFFD0DCF0),
                               width: filled ? 2 : 1.2,
                             ),
-                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2))],
+                            boxShadow: [BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 8,
+                                offset: const Offset(0, 2))],
                           ),
                           child: Center(
                             child: TextField(
@@ -190,9 +221,15 @@ class _OtpResetPageState extends State<OtpResetPage> {
                               maxLength: 1,
                               textAlign: TextAlign.center,
                               keyboardType: TextInputType.number,
-                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Color(0xFF1A3DB5)),
+                              style: const TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1A3DB5)),
                               onChanged: (v) => _onOtpChanged(v, index),
-                              decoration: const InputDecoration(border: InputBorder.none, counterText: '', contentPadding: EdgeInsets.zero),
+                              decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  counterText: '',
+                                  contentPadding: EdgeInsets.zero),
                             ),
                           ),
                         );
@@ -207,12 +244,22 @@ class _OtpResetPageState extends State<OtpResetPage> {
                         decoration: BoxDecoration(
                           color: const Color(0xFF1A56DB),
                           borderRadius: BorderRadius.circular(30),
-                          boxShadow: [BoxShadow(color: const Color(0xFF1A56DB).withOpacity(0.35), blurRadius: 18, offset: const Offset(0, 7))],
+                          boxShadow: [BoxShadow(
+                              color: const Color(0xFF1A56DB).withOpacity(0.35),
+                              blurRadius: 18,
+                              offset: const Offset(0, 7))],
                         ),
                         child: Center(
                           child: _isLoading
-                              ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-                              : const Text('Vérifier', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                              ? const SizedBox(
+                                  width: 22, height: 22,
+                                  child: CircularProgressIndicator(
+                                      color: Colors.white, strokeWidth: 2.5))
+                              : const Text('Vérifier',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w700)),
                         ),
                       ),
                     ),
@@ -220,7 +267,10 @@ class _OtpResetPageState extends State<OtpResetPage> {
                     GestureDetector(
                       onTap: _renvoyer,
                       child: const Text('Renvoyer le code',
-                          style: TextStyle(fontSize: 13.5, color: Color(0xFF1A56DB), fontWeight: FontWeight.w600)),
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              color: Color(0xFF1A56DB),
+                              fontWeight: FontWeight.w600)),
                     ),
                     const Spacer(flex: 3),
                   ],
