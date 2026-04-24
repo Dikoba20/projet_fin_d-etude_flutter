@@ -31,7 +31,7 @@ class _DashboardPageState extends State<DashboardPage> {
   List<dynamic>       _paiements   = [];
   List<dynamic>       _sinistres   = [];
   bool                _loadingData = true;
-  String?             _erreurReseau;        // ← message d'erreur réseau
+  String?             _erreurReseau;
   int                 _currentIndex = 0;
 
   // ── Palette ───────────────────────────────────────────────────────────────
@@ -47,20 +47,37 @@ class _DashboardPageState extends State<DashboardPage> {
   static const _gris   = Color(0xFF6B7280);
   static const _card   = Color(0xFFFFFFFF);
 
+  // ── Logique statuts ───────────────────────────────────────────────────────
+
   bool _estActif(dynamic statut) {
     final s = statut?.toString().toUpperCase() ?? '';
-    return s == 'ACTIF' || s == 'CONFIRME' || s == 'VALIDE' || s == 'ACTIVE';
+    return s == 'ACTIF' || s == 'ACTIVE';
   }
 
-  /// Extrait une liste depuis la réponse API.
-  /// Cherche dans plusieurs clés possibles selon l'endpoint.
+  bool _estAccepte(dynamic statut) {
+    final s = statut?.toString().toUpperCase() ?? '';
+    return s == 'ACCEPTE' || s == 'ACCEPTED' || s == 'APPROUVE';
+  }
+
+  bool _peutEtrePaye(Map<String, dynamic> contrat) {
+    if (_estAccepte(contrat['statut'])) return true;
+    if (_estActif(contrat['statut'])) {
+      final aUnPaiement = _paiements.any((p) {
+        final contratNum    = p['contrat_numero']?.toString() ?? p['contrat']?.toString() ?? '';
+        final numeroContrat = contrat['numero_contrat']?.toString() ?? '';
+        return contratNum == numeroContrat &&
+            p['statut']?.toString().toUpperCase() == 'CONFIRME';
+      });
+      return !aUnPaiement;
+    }
+    return false;
+  }
+
   List<dynamic> _extraireList(Map<String, dynamic> res, List<String> cles) {
-    // Si erreur réseau → liste vide
     if (res['network_error'] == true) return [];
     for (final cle in cles) {
       if (res[cle] is List) return res[cle] as List;
     }
-    // Certaines API DRF retournent directement une liste via 'results'
     if (res['results'] is List) return res['results'] as List;
     return [];
   }
@@ -95,7 +112,6 @@ class _DashboardPageState extends State<DashboardPage> {
       final resP  = results[3];
       final resS  = results[4] as Map<String, dynamic>;
 
-      // Détection erreur réseau sur n'importe quel appel
       final hasNetworkError = [resV, resC, resS].any((r) => r['network_error'] == true);
       if (hasNetworkError) {
         final errMsg = [resV, resC, resS]
@@ -103,17 +119,17 @@ class _DashboardPageState extends State<DashboardPage> {
         setState(() => _erreurReseau = errMsg ?? 'Serveur inaccessible.');
       }
 
-      // Log de débogage
-      debugPrint('=== VEHICULES: ${resV.keys.toList()}');
-      debugPrint('=== CONTRATS:  ${resC.keys.toList()}');
-      debugPrint('=== SINISTRES: ${resS.keys.toList()}');
-
       final vehicules = _extraireList(resV, ['vehicules', 'results', 'data']);
       final contrats  = _extraireList(resC, ['contrats',  'results', 'data']);
       final sinistres = _extraireList(resS, ['sinistres', 'results', 'data']);
-      final paiements = resP is List ? resP : _extraireList(resP as Map<String, dynamic>, ['paiements', 'results', 'data']);
+      final paiements = resP is List
+          ? resP
+          : _extraireList(resP as Map<String, dynamic>, ['paiements', 'results', 'data']);
 
       debugPrint('=== ${contrats.length} contrat(s) chargé(s)');
+      for (final c in contrats) {
+        debugPrint('  → ${c['numero_contrat']} | statut: ${c['statut']}');
+      }
 
       setState(() {
         _userInfo  = info;
@@ -153,13 +169,12 @@ class _DashboardPageState extends State<DashboardPage> {
   void _allerPaiement(Map<String, dynamic> contrat) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => NouveauPaiementPage(contratInitial: Map<String, dynamic>.from(contrat))),
+      MaterialPageRoute(
+        builder: (_) => NouveauPaiementPage(
+          contratInitial: Map<String, dynamic>.from(contrat),
+        ),
+      ),
     );
-    if (result == true) _loadAll();
-  }
-
-  void _allerNouveauPaiement() async {
-    final result = await Navigator.push(context, MaterialPageRoute(builder: (_) => const NouveauPaiementPage()));
     if (result == true) _loadAll();
   }
 
@@ -220,7 +235,10 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Row(children: [
                 Container(
                   padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: _bleu2.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                  decoration: BoxDecoration(
+                    color: _bleu2.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                   child: const Icon(Icons.description_rounded, color: _bleu2, size: 20),
                 ),
                 const SizedBox(width: 12),
@@ -281,9 +299,19 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // ── PAGE ACCUEIL ──────────────────────────────────────────────────────────
   Widget _buildAccueil() {
-    final prenom       = _userInfo['prenom'] ?? '';
-    final contratActif = _contrats.firstWhere((c) => _estActif(c['statut']), orElse: () => null);
-    final enAttente    = _contrats.where((c) => c['statut'].toString().toUpperCase() == 'EN_ATTENTE').length;
+    final prenom = _userInfo['prenom'] ?? '';
+
+    final contratActifPaye = _contrats.firstWhere(
+      (c) => _estActif(c['statut']) && !_peutEtrePaye(c),
+      orElse: () => null,
+    );
+
+    final enAttente = _contrats
+        .where((c) => c['statut']?.toString().toUpperCase() == 'EN_ATTENTE')
+        .length;
+
+    final aPayerList = _contrats.where((c) => _peutEtrePaye(c)).toList();
+    final aPayer = aPayerList.length;
 
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
@@ -291,10 +319,10 @@ class _DashboardPageState extends State<DashboardPage> {
         physics: const AlwaysScrollableScrollPhysics(),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-          // ── Header ──
+          // ── HEADER GRADIENT AVEC VOITURE ──────────────────────────────────
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(24, 32, 24, 28),
+            padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
             decoration: const BoxDecoration(
               gradient: LinearGradient(
                 colors: [_bleu1, _bleu2, _bleu3],
@@ -307,6 +335,8 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+              // Ligne utilisateur
               Row(children: [
                 Container(
                   width: 50, height: 50,
@@ -321,7 +351,7 @@ class _DashboardPageState extends State<DashboardPage> {
                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('Bonjour, $prenom !',
                       style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
-                  const Text('Espace assure',
+                  const Text('Espace assuré',
                       style: TextStyle(fontSize: 13, color: Colors.white70)),
                 ])),
                 GestureDetector(
@@ -337,10 +367,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 ),
               ]),
 
+              const SizedBox(height: 16),
+
+              // Alertes en attente
               if (enAttente > 0) ...[
-                const SizedBox(height: 16),
                 GestureDetector(
-                  onTap: () => setState(() => _currentIndex = 3),
+                  onTap: () => setState(() => _currentIndex = 2),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
                     decoration: BoxDecoration(
@@ -351,17 +383,45 @@ class _DashboardPageState extends State<DashboardPage> {
                       const Icon(Icons.access_time_rounded, color: Colors.white, size: 18),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Text('$enAttente contrat(s) en attente de paiement',
+                        child: Text('$enAttente contrat(s) en cours de validation',
                             style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                       ),
                       const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 13),
                     ]),
                   ),
                 ),
+                const SizedBox(height: 10),
               ],
 
-              const SizedBox(height: 16),
+              // Alerte paiement
+              if (aPayer > 0) ...[
+                GestureDetector(
+                  onTap: () => _allerPaiement(Map<String, dynamic>.from(aPayerList.first)),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                    decoration: BoxDecoration(
+                      color: _vert.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.credit_card_rounded, color: Colors.white, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          aPayer == 1
+                              ? 'Votre contrat est prêt — Appuyez pour payer'
+                              : '$aPayer contrats prêts à payer',
+                          style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 13),
+                    ]),
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
 
+              // Carte contrat actif
               GestureDetector(
                 onTap: () => setState(() => _currentIndex = 2),
                 child: Container(
@@ -371,7 +431,7 @@ class _DashboardPageState extends State<DashboardPage> {
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: Colors.white.withOpacity(0.25)),
                   ),
-                  child: contratActif != null
+                  child: contratActifPaye != null
                       ? Row(children: [
                           Container(
                             padding: const EdgeInsets.all(10),
@@ -383,10 +443,10 @@ class _DashboardPageState extends State<DashboardPage> {
                           ),
                           const SizedBox(width: 14),
                           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(contratActif['numero_contrat'] ?? '',
+                            Text(contratActifPaye['numero_contrat'] ?? '',
                                 style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
                             const SizedBox(height: 2),
-                            Text('Expire : ${contratActif['date_fin'] ?? ''}',
+                            Text('Expire : ${contratActifPaye['date_fin'] ?? ''}',
                                 style: const TextStyle(color: Colors.white70, fontSize: 12)),
                           ])),
                           Container(
@@ -399,7 +459,10 @@ class _DashboardPageState extends State<DashboardPage> {
                       : Row(children: [
                           Container(
                             padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                             child: const Icon(Icons.shield_outlined, color: Colors.white, size: 26),
                           ),
                           const SizedBox(width: 14),
@@ -417,9 +480,7 @@ class _DashboardPageState extends State<DashboardPage> {
             ]),
           ),
 
-          // ── Bannière erreur réseau ──
           _buildErreurBanner(),
-
           const SizedBox(height: 28),
 
           Padding(
@@ -463,11 +524,17 @@ class _DashboardPageState extends State<DashboardPage> {
               ]),
               const SizedBox(height: 14),
               if (_loadingData)
-                const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: _bleu2)))
+                const Center(child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: CircularProgressIndicator(color: _bleu2),
+                ))
               else if (_vehicules.isEmpty)
                 _emptyCard('Aucun vehicule enregistre', 'Souscrivez pour ajouter votre premier vehicule.', Icons.directions_car_rounded)
               else
-                ..._vehicules.take(2).map((v) => Padding(padding: const EdgeInsets.only(bottom: 12), child: _vehiculeCard(v))),
+                ..._vehicules.take(2).map((v) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _vehiculeCard(v),
+                )),
               const SizedBox(height: 10),
               _addCard('Nouvelle souscription', onTap: _allerSouscription),
             ]),
@@ -506,9 +573,15 @@ class _DashboardPageState extends State<DashboardPage> {
           SliverToBoxAdapter(child: _pageHeader('Mes vehicules', Icons.directions_car_rounded, _bleu1, _bleu3)),
           SliverToBoxAdapter(child: _buildErreurBanner()),
           if (_loadingData)
-            const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
+            const SliverToBoxAdapter(child: Center(child: Padding(
+              padding: EdgeInsets.all(40),
+              child: CircularProgressIndicator(color: _bleu2),
+            )))
           else if (_vehicules.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(20), child: _emptyCard('Aucun vehicule', 'Vos vehicules apparaitront ici apres souscription.', Icons.directions_car_rounded)))
+            SliverToBoxAdapter(child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: _emptyCard('Aucun vehicule', 'Vos vehicules apparaitront ici apres souscription.', Icons.directions_car_rounded),
+            ))
           else
             SliverPadding(
               padding: const EdgeInsets.all(20),
@@ -517,7 +590,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 childCount: _vehicules.length,
               )),
             ),
-          SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), child: _addCard('Nouvelle souscription', onTap: _allerSouscription))),
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: _addCard('Nouvelle souscription', onTap: _allerSouscription),
+          )),
         ],
       ),
     );
@@ -533,18 +609,30 @@ class _DashboardPageState extends State<DashboardPage> {
           SliverToBoxAdapter(child: _pageHeader('Mes contrats', Icons.article_rounded, _bleu1, _bleu3)),
           SliverToBoxAdapter(child: _buildErreurBanner()),
           if (_loadingData)
-            const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _bleu2))))
+            const SliverToBoxAdapter(child: Center(child: Padding(
+              padding: EdgeInsets.all(40),
+              child: CircularProgressIndicator(color: _bleu2),
+            )))
           else if (_contrats.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(20), child: _emptyCard('Aucun contrat', 'Souscrivez votre premiere assurance.', Icons.article_rounded)))
+            SliverToBoxAdapter(child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: _emptyCard('Aucun contrat', 'Souscrivez votre premiere assurance.', Icons.article_rounded),
+            ))
           else
             SliverPadding(
               padding: const EdgeInsets.all(20),
               sliver: SliverList(delegate: SliverChildBuilderDelegate(
-                (_, i) => Padding(padding: const EdgeInsets.only(bottom: 14), child: _contratCard(_contrats[i])),
+                (_, i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _contratCard(_contrats[i]),
+                ),
                 childCount: _contrats.length,
               )),
             ),
-          SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(20, 0, 20, 24), child: _addCard('Nouvelle souscription', onTap: _allerSouscription))),
+          SliverToBoxAdapter(child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+            child: _addCard('Nouvelle souscription', onTap: _allerSouscription),
+          )),
         ],
       ),
     );
@@ -552,14 +640,21 @@ class _DashboardPageState extends State<DashboardPage> {
 
   // ── PAGE PAIEMENTS ────────────────────────────────────────────────────────
   Widget _buildPaiementsPage() {
-    final enAttente = _contrats.where((c) => c['statut'].toString().toUpperCase() == 'EN_ATTENTE').toList();
+    final contratsAPayer = _contrats.where((c) => _peutEtrePaye(c)).toList();
+
     return RefreshIndicator(
       onRefresh: _loadAll, color: _bleu2,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
-          SliverToBoxAdapter(child: _pageHeader('Mes paiements', Icons.credit_card_rounded, const Color(0xFFB45309), const Color(0xFFF59E0B))),
+          SliverToBoxAdapter(child: _pageHeader(
+            'Mes paiements',
+            Icons.credit_card_rounded,
+            const Color(0xFFB45309),
+            const Color(0xFFF59E0B),
+          )),
           SliverToBoxAdapter(child: _buildErreurBanner()),
+
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
@@ -573,28 +668,34 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: _orange.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
-                    child: const Icon(Icons.access_time_rounded, color: _orange, size: 20),
+                    decoration: BoxDecoration(
+                      color: _orange.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.credit_card_rounded, color: _orange, size: 20),
                   ),
                   const SizedBox(width: 12),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    const Text("Rappel d'expiration",
+                    const Text("Contrats à payer",
                         style: TextStyle(fontWeight: FontWeight.w700, color: _orange, fontSize: 13)),
                     const SizedBox(height: 4),
                     Text(
-                      enAttente.isNotEmpty
-                          ? '${enAttente.length} contrat(s) en attente de paiement.'
+                      contratsAPayer.isNotEmpty
+                          ? '${contratsAPayer.length} contrat(s) prêt(s) à être payé(s). Payez pour obtenir votre attestation.'
                           : 'Aucun contrat en attente de paiement.',
                       style: const TextStyle(fontSize: 12, color: _texte),
                     ),
-                    if (enAttente.isNotEmpty) ...[
+                    if (contratsAPayer.isNotEmpty) ...[
                       const SizedBox(height: 10),
                       GestureDetector(
-                        onTap: () => _allerPaiement(enAttente.first),
+                        onTap: () => _allerPaiement(Map<String, dynamic>.from(contratsAPayer.first)),
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                          decoration: BoxDecoration(color: _orange, borderRadius: BorderRadius.circular(10)),
-                          child: const Text('Renouveler maintenant',
+                          decoration: BoxDecoration(
+                            color: _orange,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text('Payer maintenant',
                               style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                         ),
                       ),
@@ -604,55 +705,57 @@ class _DashboardPageState extends State<DashboardPage> {
               ),
             ),
           ),
-          SliverToBoxAdapter(
+
+          const SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('Historique des paiements',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _texte)),
-                GestureDetector(
-                  onTap: _allerNouveauPaiement,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(colors: [_bleu1, _bleu2]),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Row(children: [
-                      Icon(Icons.add_rounded, color: Colors.white, size: 16),
-                      SizedBox(width: 4),
-                      Text('Nouveau', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-                    ]),
-                  ),
-                ),
-              ]),
+              padding: EdgeInsets.fromLTRB(20, 24, 20, 12),
+              child: Text(
+                'Historique des paiements',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _texte),
+              ),
             ),
           ),
+
           if (_loadingData)
-            const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: _bleu2))))
+            const SliverToBoxAdapter(child: Center(child: Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(color: _bleu2),
+            )))
           else if (_paiements.isEmpty)
-            SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: _emptyCard('Aucun paiement', 'Vos paiements apparaitront ici.', Icons.receipt_long_rounded)))
+            SliverToBoxAdapter(child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: _emptyCard('Aucun paiement', 'Vos paiements apparaitront ici.', Icons.receipt_long_rounded),
+            ))
           else
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverList(delegate: SliverChildBuilderDelegate(
-                (_, i) => Padding(padding: const EdgeInsets.only(bottom: 14), child: _paiementCard(_paiements[i])),
+                (_, i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _paiementCard(_paiements[i]),
+                ),
                 childCount: _paiements.length,
               )),
             ),
-          if (enAttente.isNotEmpty) ...[
+
+          if (contratsAPayer.isNotEmpty) ...[
             const SliverToBoxAdapter(child: Padding(
               padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
-              child: Text('Contrats a payer', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _texte)),
+              child: Text('Contrats prêts à payer',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _texte)),
             )),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
               sliver: SliverList(delegate: SliverChildBuilderDelegate(
-                (_, i) => Padding(padding: const EdgeInsets.only(bottom: 14), child: _contratCard(enAttente[i])),
-                childCount: enAttente.length,
+                (_, i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _contratCard(contratsAPayer[i]),
+                ),
+                childCount: contratsAPayer.length,
               )),
             ),
           ],
+
           const SliverToBoxAdapter(child: SizedBox(height: 100)),
         ],
       ),
@@ -686,7 +789,10 @@ class _DashboardPageState extends State<DashboardPage> {
               child: Row(children: [
                 Container(
                   padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: const Icon(Icons.car_crash_rounded, color: Colors.white, size: 24),
                 ),
                 const SizedBox(width: 14),
@@ -706,7 +812,8 @@ class _DashboardPageState extends State<DashboardPage> {
                     child: const Row(children: [
                       Icon(Icons.add_rounded, color: Colors.white, size: 16),
                       SizedBox(width: 4),
-                      Text('Declarer', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                      Text('Declarer',
+                          style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
                     ]),
                   ),
                 ),
@@ -727,7 +834,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Row(children: [
                   Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(color: _rouge.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(
+                      color: _rouge.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                     child: const Icon(Icons.info_outline_rounded, color: _rouge, size: 20),
                   ),
                   const SizedBox(width: 12),
@@ -754,19 +864,26 @@ class _DashboardPageState extends State<DashboardPage> {
             ),
           ),
           if (_loadingData)
-            const SliverToBoxAdapter(child: Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(color: _rouge))))
+            const SliverToBoxAdapter(child: Center(child: Padding(
+              padding: EdgeInsets.all(40),
+              child: CircularProgressIndicator(color: _rouge),
+            )))
           else if (_sinistres.isEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: _emptyCard('Aucun sinistre declare', 'Vos declarations de sinistre apparaitront ici.', Icons.shield_rounded),
+                child: _emptyCard('Aucun sinistre declare',
+                    'Vos declarations de sinistre apparaitront ici.', Icons.shield_rounded),
               ),
             )
           else
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               sliver: SliverList(delegate: SliverChildBuilderDelegate(
-                (_, i) => Padding(padding: const EdgeInsets.only(bottom: 14), child: _sinistreCard(_sinistres[i])),
+                (_, i) => Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: _sinistreCard(_sinistres[i]),
+                ),
                 childCount: _sinistres.length,
               )),
             ),
@@ -804,8 +921,15 @@ class _DashboardPageState extends State<DashboardPage> {
           width: double.infinity,
           padding: const EdgeInsets.fromLTRB(24, 48, 24, 32),
           decoration: const BoxDecoration(
-            gradient: LinearGradient(colors: [_bleu1, _bleu2, _bleu3], begin: Alignment.topLeft, end: Alignment.bottomRight),
-            borderRadius: BorderRadius.only(bottomLeft: Radius.circular(36), bottomRight: Radius.circular(36)),
+            gradient: LinearGradient(
+              colors: [_bleu1, _bleu2, _bleu3],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(36),
+              bottomRight: Radius.circular(36),
+            ),
           ),
           child: Column(children: [
             Container(
@@ -849,7 +973,10 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: Row(children: [
                   Container(
                     padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: const Icon(Icons.dashboard_rounded, color: Colors.white, size: 22),
                   ),
                   const SizedBox(width: 14),
@@ -911,11 +1038,15 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Row(children: [
         Container(
           padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: Colors.white.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: Icon(icon, color: Colors.white, size: 24),
         ),
         const SizedBox(width: 14),
-        Text(titre, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
+        Text(titre,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white)),
       ]),
     );
   }
@@ -934,7 +1065,10 @@ class _DashboardPageState extends State<DashboardPage> {
           child: Column(children: [
             Container(
               padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Icon(icon, color: color, size: 22),
             ),
             const SizedBox(height: 8),
@@ -949,7 +1083,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Widget _vehiculeCard(Map<String, dynamic> v) {
     final estAssure = _contrats.any(
-      (c) => c['vehicule_id'].toString() == v['id'].toString() && _estActif(c['statut']),
+      (c) =>
+          c['vehicule_id'].toString() == v['id'].toString() &&
+          _estActif(c['statut']),
     );
     return Container(
       padding: const EdgeInsets.all(16),
@@ -961,7 +1097,10 @@ class _DashboardPageState extends State<DashboardPage> {
       child: Row(children: [
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: _bleu2.withOpacity(0.08), borderRadius: BorderRadius.circular(14)),
+          decoration: BoxDecoration(
+            color: _bleu2.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(14),
+          ),
           child: const Icon(Icons.directions_car_rounded, color: _bleu2, size: 26),
         ),
         const SizedBox(width: 14),
@@ -980,7 +1119,11 @@ class _DashboardPageState extends State<DashboardPage> {
           ),
           child: Text(
             estAssure ? 'Assure' : 'Non assure',
-            style: TextStyle(color: estAssure ? _vert : _rouge, fontSize: 11, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              color: estAssure ? _vert : _rouge,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ]),
@@ -991,9 +1134,27 @@ class _DashboardPageState extends State<DashboardPage> {
     final statut      = c['statut']?.toString().toUpperCase() ?? '';
     final isActif     = _estActif(c['statut']);
     final isEnAttente = statut == 'EN_ATTENTE';
-    final color       = isActif ? _vert : (isEnAttente ? _orange : _rouge);
-    final label       = isActif ? 'Actif' : (isEnAttente ? 'En attente' : c['statut'] ?? '');
-    final type        = c['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers';
+    final isAccepte   = _estAccepte(c['statut']);
+    final peutPayer   = _peutEtrePaye(c);
+
+    Color color;
+    String label;
+    if (isActif && !peutPayer) {
+      color = _vert;
+      label = 'Actif';
+    } else if (isAccepte || (isActif && peutPayer)) {
+      color = _bleu2;
+      label = isAccepte ? 'Accepté' : 'À payer';
+    } else if (isEnAttente) {
+      color = _orange;
+      label = 'En attente';
+    } else {
+      color = _rouge;
+      label = c['statut'] ?? '';
+    }
+
+    final type = c['type_assurance'] == 'TOUS_RISQUES' ? 'Tous Risques' : 'Tiers';
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -1005,7 +1166,10 @@ class _DashboardPageState extends State<DashboardPage> {
         Row(children: [
           Container(
             padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: _violet.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            decoration: BoxDecoration(
+              color: _violet.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
             child: const Icon(Icons.article_rounded, color: _violet, size: 22),
           ),
           const SizedBox(width: 12),
@@ -1016,8 +1180,12 @@ class _DashboardPageState extends State<DashboardPage> {
           ])),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
-            child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(label,
+                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
           ),
         ]),
         const SizedBox(height: 14),
@@ -1030,8 +1198,26 @@ class _DashboardPageState extends State<DashboardPage> {
         ]),
         if (isEnAttente) ...[
           const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: _orange.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _orange.withOpacity(0.4)),
+            ),
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.access_time_rounded, color: _orange, size: 18),
+              SizedBox(width: 8),
+              Text("En attente de validation par l'assureur",
+                  style: TextStyle(color: _orange, fontWeight: FontWeight.w700, fontSize: 13)),
+            ]),
+          ),
+        ],
+        if (peutPayer) ...[
+          const SizedBox(height: 14),
           GestureDetector(
-            onTap: () => _allerPaiement(c),
+            onTap: () => _allerPaiement(Map<String, dynamic>.from(c)),
             child: Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 14),
@@ -1047,6 +1233,24 @@ class _DashboardPageState extends State<DashboardPage> {
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
               ]),
             ),
+          ),
+        ],
+        if (isActif && !peutPayer) ...[
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: BoxDecoration(
+              color: _vert.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _vert.withOpacity(0.4)),
+            ),
+            child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(Icons.verified_rounded, color: _vert, size: 18),
+              SizedBox(width: 8),
+              Text('Contrat actif — Attestation disponible',
+                  style: TextStyle(color: _vert, fontWeight: FontWeight.w700, fontSize: 13)),
+            ]),
           ),
         ],
       ]),
@@ -1137,7 +1341,8 @@ class _DashboardPageState extends State<DashboardPage> {
         const Divider(height: 1, color: Color(0xFFF0F4FF)),
         const SizedBox(height: 10),
         Text(s['description'] ?? '',
-            maxLines: 2, overflow: TextOverflow.ellipsis,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 13, color: _texte)),
         if (s['lieu_accident'] != null && s['lieu_accident'].toString().isNotEmpty) ...[
           const SizedBox(height: 6),
@@ -1146,7 +1351,8 @@ class _DashboardPageState extends State<DashboardPage> {
             const SizedBox(width: 4),
             Expanded(child: Text(s['lieu_accident'],
                 style: const TextStyle(fontSize: 12, color: _gris),
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis)),
           ]),
         ],
       ]),
@@ -1281,10 +1487,16 @@ class _DashboardPageState extends State<DashboardPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 20, offset: const Offset(0, -4))],
-          borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24)),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
         ),
         child: ClipRRect(
-          borderRadius: const BorderRadius.only(topLeft: Radius.circular(24), topRight: Radius.circular(24)),
+          borderRadius: const BorderRadius.only(
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
+          ),
           child: BottomNavigationBar(
             currentIndex: _currentIndex,
             onTap: (i) => setState(() => _currentIndex = i),
@@ -1296,12 +1508,36 @@ class _DashboardPageState extends State<DashboardPage> {
             unselectedLabelStyle: const TextStyle(fontSize: 11),
             elevation: 0,
             items: const [
-              BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home_rounded), label: 'Accueil'),
-              BottomNavigationBarItem(icon: Icon(Icons.directions_car_outlined), activeIcon: Icon(Icons.directions_car_rounded), label: 'Vehicules'),
-              BottomNavigationBarItem(icon: Icon(Icons.article_outlined), activeIcon: Icon(Icons.article_rounded), label: 'Contrats'),
-              BottomNavigationBarItem(icon: Icon(Icons.credit_card_outlined), activeIcon: Icon(Icons.credit_card_rounded), label: 'Paiements'),
-              BottomNavigationBarItem(icon: Icon(Icons.car_crash_outlined), activeIcon: Icon(Icons.car_crash_rounded), label: 'Sinistres'),
-              BottomNavigationBarItem(icon: Icon(Icons.person_outline_rounded), activeIcon: Icon(Icons.person_rounded), label: 'Profil'),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.home_outlined),
+                activeIcon: Icon(Icons.home_rounded),
+                label: 'Accueil',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.directions_car_outlined),
+                activeIcon: Icon(Icons.directions_car_rounded),
+                label: 'Vehicules',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.article_outlined),
+                activeIcon: Icon(Icons.article_rounded),
+                label: 'Contrats',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.credit_card_outlined),
+                activeIcon: Icon(Icons.credit_card_rounded),
+                label: 'Paiements',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.car_crash_outlined),
+                activeIcon: Icon(Icons.car_crash_rounded),
+                label: 'Sinistres',
+              ),
+              BottomNavigationBarItem(
+                icon: Icon(Icons.person_outline_rounded),
+                activeIcon: Icon(Icons.person_rounded),
+                label: 'Profil',
+              ),
             ],
           ),
         ),
@@ -1309,3 +1545,5 @@ class _DashboardPageState extends State<DashboardPage> {
     );
   }
 }
+
+

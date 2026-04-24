@@ -101,7 +101,6 @@ class _LoginPageState extends State<LoginPage>
   bool _biometricAvailable = false;
   String? _selectedRole;
 
-  // ── Indicateurs de force du mot de passe (web uniquement)
   bool _hasUpper    = false;
   bool _hasLower    = false;
   bool _hasDigit    = false;
@@ -120,14 +119,10 @@ class _LoginPageState extends State<LoginPage>
     {'value': 'ADMIN',  'label': 'Administrateur',      'icon': Icons.admin_panel_settings_rounded},
   ];
 
-  // Web : AGENT + ADMIN utilisent email + password fort
+  // AGENT + ADMIN → email + password fort
   bool get _isWebRole =>
       kIsWeb && (_selectedRole == 'AGENT' || _selectedRole == 'ADMIN');
 
-  // ════════════════════════════════════════════════
-  // VALIDATION MOT DE PASSE FORT (web uniquement)
-  // Règles : majuscule + minuscule + chiffre + 6-8 caractères
-  // ════════════════════════════════════════════════
   void _onPasswordChanged(String val) {
     if (!_isWebRole) return;
     setState(() {
@@ -171,13 +166,6 @@ class _LoginPageState extends State<LoginPage>
     super.dispose();
   }
 
-  // ════════════════════════════════════════════════
-  // REDIRECTION SELON LE RÔLE
-  // ADMIN  → AdminDashboardPage
-  // AGENT  → AgentDashboardPage
-  // EXPERT → ExpertDashboardPage
-  // CLIENT → DashboardPage
-  // ════════════════════════════════════════════════
   void _redirecterSelonRole(String role) {
     if (!mounted) return;
     Widget destination;
@@ -199,20 +187,14 @@ class _LoginPageState extends State<LoginPage>
   }
 
   // ════════════════════════════════════════════════
-  // VÉRIFICATION PLATEFORME SELON RÔLE
-  // Web    : AGENT, ADMIN
-  // Mobile : CLIENT, AGENT (EXPERT retiré mobile)
+  // Web    : AGENT, ADMIN, CLIENT ✅ (CLIENT temporaire)
+  // Mobile : CLIENT, AGENT, EXPERT
   // ════════════════════════════════════════════════
   bool _rolePlatformeAutorisee(String role) {
-    if (kIsWeb) return role == 'AGENT' || role == 'ADMIN';
-    return role == 'CLIENT' || role == 'AGENT';
+    if (kIsWeb) return role == 'AGENT' || role == 'ADMIN' || role == 'CLIENT'; // ✅ TEMPORAIRE
+    return role == 'CLIENT' || role == 'AGENT' || role == 'EXPERT';
   }
 
-  // ════════════════════════════════════════════════
-  // LOGIN PRINCIPAL
-  // Web  + AGENT/ADMIN → POST /connexion-agent/ (email + password fort)
-  // Mobile + tout rôle → POST /connexion/       (telephone + code_pin)
-  // ════════════════════════════════════════════════
   void _handleLogin() async {
     final input    = _emailController.text.trim();
     final password = _passwordController.text;
@@ -239,7 +221,6 @@ class _LoginPageState extends State<LoginPage>
       return;
     }
 
-    // ✅ Validation mot de passe fort côté web
     if (_isWebRole && !_passwordValide) {
       _showSnack(
           'Mot de passe invalide : majuscule, minuscule, chiffre requis (6-8 caractères).',
@@ -252,11 +233,13 @@ class _LoginPageState extends State<LoginPage>
       Map<String, dynamic> res;
 
       if (_isWebRole) {
+        // AGENT ou ADMIN → email + password fort
         res = await _authService.connecterAgent(
           email:    input,
           password: password,
         );
       } else {
+        // CLIENT (web ou mobile), EXPERT, AGENT mobile → téléphone + code_pin
         res = await _authService.connecter(
           telephone: input,
           codePin:   password,
@@ -278,7 +261,6 @@ class _LoginPageState extends State<LoginPage>
     }
   }
 
-  // ── Login biométrique
   void _handleBiometricLogin() async {
     setState(() => _isLoading = true);
     try {
@@ -348,14 +330,13 @@ class _LoginPageState extends State<LoginPage>
     );
   }
 
-  // ── Rôles filtrés selon la plateforme
-  // Web    : AGENT + ADMIN
-  // Mobile : CLIENT + AGENT (EXPERT retiré)
+  // Web    : AGENT + ADMIN + CLIENT ✅ (temporaire)
+  // Mobile : CLIENT + AGENT + EXPERT
   List<Map<String, dynamic>> get _rolesDisponibles {
     return _roles.where((r) {
       final v = r['value'] as String;
-      if (kIsWeb) return v == 'AGENT' || v == 'ADMIN';
-      return v == 'CLIENT' || v == 'AGENT';
+      if (kIsWeb) return v == 'AGENT' || v == 'ADMIN' || v == 'CLIENT'; // ✅ TEMPORAIRE
+      return v == 'CLIENT' || v == 'AGENT' || v == 'EXPERT';
     }).toList();
   }
 
@@ -392,7 +373,6 @@ class _LoginPageState extends State<LoginPage>
                     children: [
                       const SizedBox(height: 40),
 
-                      // ── LOGO
                       const AssurancyLogo(size: 92),
                       const SizedBox(height: 16),
                       const Text('AssurAncy',
@@ -487,7 +467,6 @@ class _LoginPageState extends State<LoginPage>
 
                       const SizedBox(height: 14),
 
-                      // ── CHAMP IDENTIFIANT (email ou téléphone)
                       _buildTextField(
                         controller: _emailController,
                         hint: _inputHint,
@@ -497,7 +476,6 @@ class _LoginPageState extends State<LoginPage>
 
                       const SizedBox(height: 14),
 
-                      // ── MOT DE PASSE / CODE PIN
                       _buildTextField(
                         controller: _passwordController,
                         hint: _isWebRole ? 'Mot de passe' : 'Code PIN',
@@ -518,7 +496,6 @@ class _LoginPageState extends State<LoginPage>
                         ),
                       ),
 
-                      // ── INDICATEURS MOT DE PASSE FORT (web uniquement)
                       if (_isWebRole &&
                           _passwordController.text.isNotEmpty) ...[
                         const SizedBox(height: 10),
@@ -528,8 +505,7 @@ class _LoginPageState extends State<LoginPage>
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(12),
-                            border:
-                                Border.all(color: const Color(0xFFD0DCF0)),
+                            border: Border.all(color: const Color(0xFFD0DCF0)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -540,14 +516,10 @@ class _LoginPageState extends State<LoginPage>
                                       fontWeight: FontWeight.w700,
                                       color: Color(0xFF4A5568))),
                               const SizedBox(height: 6),
-                              _PasswordRule(
-                                  'Au moins une majuscule (A-Z)', _hasUpper),
-                              _PasswordRule(
-                                  'Au moins une minuscule (a-z)', _hasLower),
-                              _PasswordRule(
-                                  'Au moins un chiffre (0-9)', _hasDigit),
-                              _PasswordRule(
-                                  'Entre 6 et 8 caractères', _hasValidLen),
+                              _PasswordRule('Au moins une majuscule (A-Z)', _hasUpper),
+                              _PasswordRule('Au moins une minuscule (a-z)', _hasLower),
+                              _PasswordRule('Au moins un chiffre (0-9)', _hasDigit),
+                              _PasswordRule('Entre 6 et 8 caractères', _hasValidLen),
                             ],
                           ),
                         ),
@@ -566,8 +538,7 @@ class _LoginPageState extends State<LoginPage>
                             borderRadius: BorderRadius.circular(30),
                             boxShadow: [
                               BoxShadow(
-                                  color: const Color(0xFF1A56DB)
-                                      .withOpacity(0.35),
+                                  color: const Color(0xFF1A56DB).withOpacity(0.35),
                                   blurRadius: 18,
                                   offset: const Offset(0, 7))
                             ],
@@ -578,8 +549,7 @@ class _LoginPageState extends State<LoginPage>
                                     width: 22,
                                     height: 22,
                                     child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2.5))
+                                        color: Colors.white, strokeWidth: 2.5))
                                 : const Text('Se connecter',
                                     style: TextStyle(
                                         color: Colors.white,
@@ -594,18 +564,14 @@ class _LoginPageState extends State<LoginPage>
                       // ── BIOMÉTRIE (mobile uniquement)
                       if (_biometricAvailable && !kIsWeb) ...[
                         Row(children: [
-                          const Expanded(
-                              child: Divider(color: Color(0xFFD0DCF0))),
+                          const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
                           Padding(
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 12),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                             child: Text('ou',
                                 style: TextStyle(
-                                    color: Colors.grey.shade400,
-                                    fontSize: 12)),
+                                    color: Colors.grey.shade400, fontSize: 12)),
                           ),
-                          const Expanded(
-                              child: Divider(color: Color(0xFFD0DCF0))),
+                          const Expanded(child: Divider(color: Color(0xFFD0DCF0))),
                         ]),
                         const SizedBox(height: 14),
                         GestureDetector(
@@ -617,8 +583,7 @@ class _LoginPageState extends State<LoginPage>
                               color: Colors.white,
                               borderRadius: BorderRadius.circular(30),
                               border: Border.all(
-                                  color: const Color(0xFF1A56DB),
-                                  width: 1.5),
+                                  color: const Color(0xFF1A56DB), width: 1.5),
                               boxShadow: [
                                 BoxShadow(
                                     color: Colors.black.withOpacity(0.04),
@@ -629,18 +594,14 @@ class _LoginPageState extends State<LoginPage>
                             child: FutureBuilder<IconData>(
                               future: _getBiometricIcon(),
                               builder: (context, snapshot) {
-                                final icon = snapshot.data ??
-                                    Icons.fingerprint_rounded;
+                                final icon = snapshot.data ?? Icons.fingerprint_rounded;
                                 final label = icon == Icons.face_rounded
                                     ? 'Connexion avec Face ID'
                                     : 'Connexion avec empreinte';
                                 return Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
+                                    mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(icon,
-                                          color: const Color(0xFF1A56DB),
-                                          size: 26),
+                                      Icon(icon, color: const Color(0xFF1A56DB), size: 26),
                                       const SizedBox(width: 10),
                                       Text(label,
                                           style: const TextStyle(
@@ -659,11 +620,8 @@ class _LoginPageState extends State<LoginPage>
 
                       // ── MOT DE PASSE OUBLIÉ
                       GestureDetector(
-                        onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    const MotDePasseOubliePage())),
+                        onTap: () => Navigator.push(context,
+                            MaterialPageRoute(builder: (_) => const MotDePasseOubliePage())),
                         child: const Text('Mot de passe oublié ?',
                             style: TextStyle(
                                 fontSize: 13.5,
@@ -678,16 +636,12 @@ class _LoginPageState extends State<LoginPage>
                       // ── INSCRIPTION (mobile uniquement)
                       if (!kIsWeb)
                         GestureDetector(
-                          onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const InscriptionPage())),
+                          onTap: () => Navigator.push(context,
+                              MaterialPageRoute(builder: (_) => const InscriptionPage())),
                           child: RichText(
                             text: const TextSpan(
                               text: 'Nouvel utilisateur ? ',
-                              style: TextStyle(
-                                  fontSize: 13.5,
-                                  color: Color(0xFF4A5568)),
+                              style: TextStyle(fontSize: 13.5, color: Color(0xFF4A5568)),
                               children: [
                                 TextSpan(
                                   text: "S'inscrire maintenant",
@@ -704,13 +658,11 @@ class _LoginPageState extends State<LoginPage>
 
                       // ── CONTACTS
                       Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                              color: const Color(0xFFE0E8F5)),
+                          border: Border.all(color: const Color(0xFFE0E8F5)),
                         ),
                         child: const Row(
                             mainAxisSize: MainAxisSize.min,
@@ -769,15 +721,12 @@ class _LoginPageState extends State<LoginPage>
         style: const TextStyle(fontSize: 15, color: Color(0xFF1A1A2E)),
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle:
-              const TextStyle(color: Color(0xFFADBDD8), fontSize: 14),
-          prefixIcon:
-              Icon(icon, color: const Color(0xFFADBDD8), size: 21),
+          hintStyle: const TextStyle(color: Color(0xFFADBDD8), fontSize: 14),
+          prefixIcon: Icon(icon, color: const Color(0xFFADBDD8), size: 21),
           suffixIcon: suffixIcon,
           border: InputBorder.none,
-          counterText: '', // masquer le compteur maxLength
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          counterText: '',
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         ),
       ),
     );
@@ -796,21 +745,15 @@ class _PasswordRule extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(children: [
         Icon(
-          valid
-              ? Icons.check_circle_rounded
-              : Icons.radio_button_unchecked_rounded,
+          valid ? Icons.check_circle_rounded : Icons.radio_button_unchecked_rounded,
           size: 14,
-          color: valid
-              ? const Color(0xFF16A34A)
-              : const Color(0xFFADBDD8),
+          color: valid ? const Color(0xFF16A34A) : const Color(0xFFADBDD8),
         ),
         const SizedBox(width: 6),
         Text(label,
             style: TextStyle(
                 fontSize: 11,
-                color: valid
-                    ? const Color(0xFF16A34A)
-                    : const Color(0xFF8EA8D8))),
+                color: valid ? const Color(0xFF16A34A) : const Color(0xFF8EA8D8))),
       ]),
     );
   }

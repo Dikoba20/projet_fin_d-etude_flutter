@@ -95,7 +95,7 @@ class _PaiementPageState extends State<PaiementPage> {
                 children: [
                   _buildRappelBanner(numeroContrat, dateFin),
                   const SizedBox(height: 16),
-                  _buildSectionHeader(context),
+                  _buildSectionHeader(), // ← bouton Nouveau supprimé
                   const SizedBox(height: 12),
                   ..._mockPaiements.map((p) => _buildCartePaiement(context, p)),
                   const SizedBox(height: 8),
@@ -233,37 +233,12 @@ class _PaiementPageState extends State<PaiementPage> {
     );
   }
 
-  // ── En-tête de section ──────────────────────────────────────────────────────
-  Widget _buildSectionHeader(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        const Text('Historique des paiements',
-            style: TextStyle(
-                fontWeight: FontWeight.w700, color: kText, fontSize: 16)),
-        GestureDetector(
-          onTap: () => _ouvrirNouveauPaiement(context),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(colors: [kBlue, kBlueMid]),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            child: const Row(
-              children: [
-                Icon(Icons.add, color: Colors.white, size: 16),
-                SizedBox(width: 4),
-                Text('Nouveau',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-        ),
-      ],
+  // ── En-tête de section (sans bouton Nouveau) ────────────────────────────────
+  Widget _buildSectionHeader() {
+    return const Text(
+      'Historique des paiements',
+      style: TextStyle(
+          fontWeight: FontWeight.w700, color: kText, fontSize: 16),
     );
   }
 
@@ -419,11 +394,6 @@ class _PaiementPageState extends State<PaiementPage> {
   }
 
   // ── Actions ─────────────────────────────────────────────────────────────────
-  void _ouvrirNouveauPaiement(BuildContext context) {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const NouveauPaiementPage()));
-  }
-
   void _voirDetail(BuildContext context, Paiement p) {
     Navigator.push(context,
         MaterialPageRoute(builder: (_) => DetailPaiementPage(paiement: p)));
